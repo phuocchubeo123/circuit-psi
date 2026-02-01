@@ -4,3 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+curve25519-dalek = "4"
+rand_core = "0.9.5"
+rand = "0.9.2"
+anyhow = "1.0.100"
