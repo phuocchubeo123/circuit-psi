@@ -12,7 +12,7 @@ use std::ops::{Add, AddAssign};
 // We assume that the offline phase is already done
 // https://eprint.iacr.org/2010/514.pdf
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub struct BeDOZaReceiver {
     tag: FE, // We have tag = share * key + pad, where share and pad is possessed by the BeDOZaSender
     key: FE,
@@ -50,8 +50,14 @@ impl BeDOZaReceiver {
         }
     }
 
-    pub fn authenticate(side: bool, channel: &mut TcpChannel) -> Result<Vec<BeDOZaReceiver>> {
-        unimplemented!()
+    pub fn add(self, other: &BeDOZaReceiver) -> BeDOZaReceiver {
+        assert_eq!(self.key(), other.key(), "Key mismatch in BeDOZa addition: lhs = {:?}, rhs = {:?}", self.key(), other.key());
+        assert_eq!(self.side(), other.side(), "Side mismatch in BeDOZa addition: lhs = {:?}, rhs = {:?}", self.side(), other.side());
+        BeDOZaReceiver {
+            tag: self.tag() + other.tag(),
+            key: self.key(),
+            side: self.side(),
+        }
     }
 }
 

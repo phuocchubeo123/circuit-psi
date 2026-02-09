@@ -5,10 +5,10 @@ pub mod defines;
 
 use crate::{
     bedoza::{
-        bedoza_receiver::BeDOZaReceiver, 
+        bedoza_receiver::{BeDOZaReceiver, receive_open_shares}, 
         bedoza_sender::BeDOZaSender, 
         comm_util::send_fe_vec, 
-        defines::{FE, random_fe_vec}
+        defines::FE,
     }, 
     tcp_channel::TcpChannel,
 };
@@ -16,11 +16,19 @@ use anyhow::{anyhow, ensure, Result};
 
 // Contains some functionalities for BeDOZa here
 
+pub struct BeDOZa {
+    bedoza_sender: BeDOZaSender,
+    bedoza_receiver: BeDOZaReceiver,
+}
+
+impl BeDOZa {
+
+}
+
+
 pub fn share_values(
     vals: &[FE], 
-    prepared_bedoza_senders: &[BeDOZaSender],
-    prepared_bedoza_receivers: &[BeDOZaReceiver],
-    side: bool,
+    prepared_bedoza_shares: &[BeDOZa],
     channel: &mut TcpChannel) 
 -> Result<(Vec<BeDOZaSender>, Vec<BeDOZaReceiver>)> {
     ensure!(vals.len() == prepared_bedoza_senders.len(), 
@@ -28,24 +36,32 @@ pub fn share_values(
     ensure!(vals.len() == prepared_bedoza_receivers.len(), 
         "Length mismatch between vals and prepared_bedoza_receivers: lhs = {}, rhs = {}", vals.len(), prepared_bedoza_receivers.len());
 
-    let n = vals.len();
+    // Open the prepared shared randomness to the sharer
+    let open_prepared_bedoza_receivers = receive_open_shares(prepared_bedoza_receivers, channel)
+        .map_err(|e| anyhow!("Failed to receive open BeDOZaReceiver shares: {}", e))?;
+    let open_prepared_random_values: Vec<FE> = open_prepared_bedoza_receivers.iter()
+        .zip(prepared_bedoza_senders.iter())
+        .map(|(&x, y)| x + y.val()).collect();
 
-    // Randomly sample the other party's share, then send to the other party
-    let other_shares = random_fe_vec(n)
-        .map_err(|e| anyhow!("Error sampling random FE value: {}", e))?;
-    send_fe_vec(&other_shares, channel)
-        .map_err(|e| anyhow!("Failed to send other_shares to the other party: {}", e))?;
+    // Then the sharer masks his values and sends them to the other party
+    let masked_vals = vals.iter()
+        .zip(open_prepared_random_values.iter())
+        .map(|(&v, &r)| v - r).collect::<Vec<FE>>();
+    send_fe_vec(&masked_vals, channel)
+        .map_err(|e| anyhow!("Failed to send masked vals: {}", e))?;
 
-    // Get my shares by subtracting other party's shares from the values
-    let my_shares: Vec<FE> = vals.iter().zip(other_shares.iter()).map(|(x, y)| x - y).collect();
+    // Now add the masked value to the prepared shares to get shares for the actual values
+    let bedoza_sender_share: Vec<BeDOZaSender> = prepared_bedoza_senders.iter()
+        .zip(masked_vals.iter())
+        .map(|(prepared_share, &masked_val)| {
+            prepared_share.add_constant(masked_val)
+        }).collect();
 
-    // Authenticate my shares, as bedoza sender
-    let bedoza_sender_share = BeDOZaSender::authenticate(&my_shares, prepared_bedoza_senders, side, channel)
-        .map_err(|e| anyhow!("Failed to authenticate share for the first share: {}", e))?;
-
-    // Authenticate other party's shares, as bedoza receiver
-    let bedoza_receiver_share = BeDOZaReceiver::authenticate(side, channel)
-        .map_err(|e| anyhow!("Failed to receive authenticated share for the second share: {}", e))?;
+    let bedoza_receiver_share: Vec<BeDOZaReceiver> = prepared_bedoza_receivers.iter()
+        .zip(masked_vals.iter())
+        .map(|(prepared_share, &masked_val)| {
+            prepared_share.add_constant(masked_val)
+        }).collect();
 
     Ok((bedoza_sender_share, bedoza_receiver_share))
 }

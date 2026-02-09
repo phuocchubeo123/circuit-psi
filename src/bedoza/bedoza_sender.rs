@@ -1,12 +1,13 @@
 use crate::{
     bedoza::{
-        comm_util::send_fe_vec, 
-        defines::{FE, random_fe_vec}
-    }, 
+        comm_util::send_fe_vec,
+        defines::FE,
+    },
     tcp_channel::TcpChannel
 };
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{anyhow, Result};
 
+#[derive(Copy, Clone)]
 pub struct BeDOZaSender {
     val: FE,
     pad: FE,
@@ -52,26 +53,6 @@ impl BeDOZaSender {
             side: self.side(),
         }
     }
-
-    pub fn authenticate(vals: &[FE], prepared_bedoza_senders: &[BeDOZaSender], side: bool, channel: &mut TcpChannel) -> Result<Vec<BeDOZaSender>> {
-        let n = vals.len();        
-        ensure!(prepared_bedoza_senders.len() == n, "Number of prepared BeDOZa senders must match the number of values to authenticate: expected {}, got {}", n, prepared_bedoza_senders.len());
-
-        // Generate random pad for each value to be authenticated
-        let pads = random_fe_vec(n)
-            .map_err(|e| anyhow!("Failed to prepare random pads: {}", e))?;
-
-
-        let masked_bedoza_senders: Vec<BeDOZaSender> =  prepared_bedoza_senders.iter().zip(vals.iter()).map(|(x, &val)| 
-            x.add_constant(val))
-        .collect();
-
-        send_open_shares(&masked_bedoza_senders, channel)
-            .map_err(|e| anyhow!("Failed to send open shares: {}", e))?;
-
-
-    }
-
 }
 
 pub fn send_open_shares(bedoza_senders: &[BeDOZaSender], channel: &mut TcpChannel) -> Result<()> {
