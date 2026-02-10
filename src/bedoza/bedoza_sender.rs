@@ -29,7 +29,7 @@ impl BeDOZaSender {
 
     /// Add a public constant to an authenticated value.
     /// Only add the constant to the share of side 0
-    pub fn add_constant(self, constant: FE) -> BeDOZaSender {
+    pub fn add_constant(&self, constant: FE) -> BeDOZaSender {
         if self.side() { // If side = true, don't do anything to the share
             BeDOZaSender {
                 val: self.val(),
@@ -45,11 +45,28 @@ impl BeDOZaSender {
         }
     }
 
-    pub fn add(self, other: &BeDOZaSender) -> BeDOZaSender {
+    pub fn add(&self, other: &BeDOZaSender) -> BeDOZaSender {
         assert_eq!(self.side(), other.side(), "Cannot add BeDOZa senders from different sides");
         BeDOZaSender {
             val: self.val() + other.val(),
             pad: self.pad() + other.pad(),
+            side: self.side(),
+        }
+    }
+
+    pub fn sub(&self, other: &BeDOZaSender) -> BeDOZaSender {
+        assert_eq!(self.side(), other.side(), "Cannot subtract BeDOZa senders from different sides");
+        BeDOZaSender {
+            val: self.val() - other.val(),
+            pad: self.pad() - other.pad(),
+            side: self.side(),
+        }
+    }
+
+    pub fn mult_constant(&self, constant: FE) -> BeDOZaSender {
+        BeDOZaSender {
+            val: self.val() * constant,
+            pad: self.pad() * constant,
             side: self.side(),
         }
     }

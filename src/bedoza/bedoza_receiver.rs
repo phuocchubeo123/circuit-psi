@@ -34,7 +34,7 @@ impl BeDOZaReceiver {
 
     /// Add a public constant to an authenticated value.
     /// Only add the constant to the share of side 0
-    pub fn add_constant(self, constant: FE) -> BeDOZaReceiver {
+    pub fn add_constant(&self, constant: FE) -> BeDOZaReceiver {
         if self.side() { // If side = true, don't do anything to the share
             BeDOZaReceiver {
                 tag: self.tag(),
@@ -50,11 +50,29 @@ impl BeDOZaReceiver {
         }
     }
 
-    pub fn add(self, other: &BeDOZaReceiver) -> BeDOZaReceiver {
+    pub fn add(&self, other: &BeDOZaReceiver) -> BeDOZaReceiver {
         assert_eq!(self.key(), other.key(), "Key mismatch in BeDOZa addition: lhs = {:?}, rhs = {:?}", self.key(), other.key());
         assert_eq!(self.side(), other.side(), "Side mismatch in BeDOZa addition: lhs = {:?}, rhs = {:?}", self.side(), other.side());
         BeDOZaReceiver {
             tag: self.tag() + other.tag(),
+            key: self.key(),
+            side: self.side(),
+        }
+    }
+
+    pub fn sub(&self, other: &BeDOZaReceiver) -> BeDOZaReceiver {
+        assert_eq!(self.key(), other.key(), "Key mismatch in BeDOZa subtraction: lhs = {:?}, rhs = {:?}", self.key(), other.key());
+        assert_eq!(self.side(), other.side(), "Side mismatch in BeDOZa subtraction: lhs = {:?}, rhs = {:?}", self.side(), other.side());
+        BeDOZaReceiver {
+            tag: self.tag() - other.tag(),
+            key: self.key(),
+            side: self.side(),
+        }
+    }
+
+    pub fn mult_constant(&self, constant: FE) -> BeDOZaReceiver {
+        BeDOZaReceiver {
+            tag: self.tag() * constant,
             key: self.key(),
             side: self.side(),
         }
