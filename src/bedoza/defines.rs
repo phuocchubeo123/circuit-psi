@@ -1,7 +1,6 @@
-use swanky_field_binary::F128b;
+use lambdaworks_math::field::
 use anyhow::{anyhow, Result};
 use rand::RngExt;
-use swanky_serialization::CanonicalSerialize;
 
 pub type FE = F128b;
 
