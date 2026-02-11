@@ -12,6 +12,7 @@ use crate::{
     }, 
     tcp_channel::TcpChannel,
 };
+use std::ops::{Add, Sub, Mul};
 use anyhow::{anyhow, ensure, Result};
 
 // Contains some functionalities for BeDOZa here
@@ -36,35 +37,9 @@ impl BeDOZa {
     pub fn bedoza_receiver(&self) -> &BeDOZaReceiver {
         &self.bedoza_receiver
     }
-
-    pub fn add(&self, other: &BeDOZa) -> Result<BeDOZa> {
-        ensure!(self.bedoza_sender().side() == other.bedoza_sender().side(), 
-            "Cannot add BeDOZa shares from different sides: lhs side = {}, rhs side = {}", self.bedoza_sender().side(), other.bedoza_sender().side());
-        Ok(BeDOZa {
-            bedoza_sender: self.bedoza_sender().add(&other.bedoza_sender()),
-            bedoza_receiver: self.bedoza_receiver().add(&other.bedoza_receiver()),
-        })
-    }
-
-    pub fn sub(&self, other: &BeDOZa) -> Result<BeDOZa> {
-        ensure!(self.bedoza_sender().side() == other.bedoza_sender().side(), 
-            "Cannot subtract BeDOZa shares from different sides: lhs side = {}, rhs side = {}", self.bedoza_sender().side(), other.bedoza_sender().side());
-        Ok(BeDOZa {
-            bedoza_sender: self.bedoza_sender().sub(&other.bedoza_sender()),
-            bedoza_receiver: self.bedoza_receiver().sub(&other.bedoza_receiver()),
-        })
-    }
-
-    pub fn mult_constant(&self, constant: FE) -> BeDOZa {
-        BeDOZa {
-            bedoza_sender: self.bedoza_sender().mult_constant(constant),
-            bedoza_receiver: self.bedoza_receiver().mult_constant(constant),
-        }
-    }
 }
 
 pub type BeDOZaTriple = (BeDOZa, BeDOZa, BeDOZa);
-
 
 pub fn share_values(
     vals: &[FE], 
@@ -96,11 +71,9 @@ pub fn share_values(
         .zip(prepared_bedoza_receivers.iter())
         .zip(masked_vals.iter())
         .map(|((prepared_sender, prepared_receiver), &masked_val)| {
-            let sender_share = prepared_sender.add_constant(masked_val);
-            let receiver_share = prepared_receiver.add_constant(masked_val);
             BeDOZa {
-                bedoza_sender: sender_share,
-                bedoza_receiver: receiver_share,
+                bedoza_sender: prepared_sender + masked_val,
+                bedoza_receiver: prepared_receiver + masked_val,
             }
         }).collect();
 
@@ -124,15 +97,40 @@ pub fn receive_share_values(
         .zip(prepared_bedoza_receivers.iter())
         .zip(masked_vals.iter())
         .map(|((prepared_sender, prepared_receiver), &masked_val)| {
-            let sender_share = prepared_sender.add_constant(masked_val);
-            let receiver_share = prepared_receiver.add_constant(masked_val);
             BeDOZa {
-                bedoza_sender: sender_share,
-                bedoza_receiver: receiver_share,
+                bedoza_sender: prepared_sender + masked_val,
+                bedoza_receiver: prepared_receiver + masked_val,
             }
         }).collect();
     
     Ok(bedoza_shared)
+}
+
+pub fn open_values_send(
+    bedoza_shares: &[BeDOZa],
+    channel: &mut TcpChannel,
+) -> Result<()> {
+    let bedoza_senders: Vec<BeDOZaSender> = bedoza_shares.iter().map(|share| *share.bedoza_sender()).collect();
+    send_open_shares(&bedoza_senders, channel)
+        .map_err(|e| anyhow!("Failed to send open shares: {}", e))?;
+
+    Ok(())
+}
+
+pub fn open_values_receive(
+    bedoza_shares: &[BeDOZa],
+    channel: &mut TcpChannel,
+) -> Result<Vec<FE>> {
+    let bedoza_receivers: Vec<BeDOZaReceiver> = bedoza_shares.iter().map(|share| *share.bedoza_receiver()).collect();
+    let received_values = receive_open_shares(&bedoza_receivers, channel)
+        .map_err(|e| anyhow!("Failed to receive open shares: {}", e))?;
+
+    let reconstructed_values: Vec<FE> = bedoza_shares.iter()
+        .zip(received_values.iter())
+        .map(|(share, &receiver_value)| share.bedoza_sender().val() + receiver_value)
+        .collect();
+
+    Ok(reconstructed_values)
 }
 
 pub fn batch_multiply(
@@ -149,13 +147,13 @@ pub fn batch_multiply(
     // First compute d = x - a and e = y - b
     let d_shares: Vec<BeDOZa> = x_shares.iter().zip(triple_shares.iter()).map(|(x_share, triple_share)| {
         let (a_share, _, _) = triple_share;
-        x_share.sub(a_share).map_err(|e| anyhow!("Failed to subtract a_share from x_share: {}", e))
-    }).collect::<Result<Vec<BeDOZa>>>()?;
+        x_share - a_share
+    }).collect();
 
     let e_shares: Vec<BeDOZa> = y_shares.iter().zip(triple_shares.iter()).map(|(y_share, triple_share)| {
         let (_, b_share, _) = triple_share;
-        y_share.sub(b_share).map_err(|e| anyhow!("Failed to subtract b_share from y_share: {}", e))
-    }).collect::<Result<Vec<BeDOZa>>>()?;
+        y_share - b_share
+    }).collect();
 
     // Now open d and e to both parties
     let d_receivers: Vec<BeDOZaReceiver> = d_shares.iter().map(|share| *share.bedoza_receiver()).collect();
@@ -169,7 +167,134 @@ pub fn batch_multiply(
     let e_values: Vec<FE> = e_shares.iter().zip(e_receiver_values.iter()).map(|(share, &receiver_value)| share.bedoza_sender().val() + receiver_value).collect();
 
     // Compute db and ea locally
+    let db_shares: Vec<BeDOZa> = d_values.iter().zip(triple_shares.iter()).map(|(&d, triple_share)| {
+        let (_, b_share, _) = triple_share;
+        b_share * d
+    }).collect();
 
+    let ea_shares: Vec<BeDOZa> = e_values.iter().zip(triple_shares.iter()).map(|(&e, triple_share)| {
+        let (a_share, _, _) = triple_share;
+        a_share * e
+    }).collect();
 
-    Ok(d_shares) // Not correct
+    let de_values: Vec<FE> = d_values.iter().zip(e_values.iter()).map(|(&d, &e)| d * e).collect();
+
+    // Compute the final result: c = ab + db + ea + de
+    let xy_shares: Vec<BeDOZa> = triple_shares.iter().zip(db_shares.iter()).zip(ea_shares.iter()).zip(de_values.iter())
+        .map(|((((_, _, c_share), db_share), ea_share), &de)| {
+            c_share + db_share + ea_share + de
+        }).collect();
+
+    Ok(xy_shares)
+}
+
+impl Add<&BeDOZa> for &BeDOZa {
+    type Output = BeDOZa;
+
+    fn add(self, other: &BeDOZa) -> BeDOZa {
+        BeDOZa {
+            bedoza_sender: self.bedoza_sender() + other.bedoza_sender(),
+            bedoza_receiver: self.bedoza_receiver() + other.bedoza_receiver(),
+        }
+    }
+}
+
+impl Add<BeDOZa> for &BeDOZa {
+    type Output = BeDOZa;
+
+    fn add(self, other: BeDOZa) -> BeDOZa {
+        self + &other
+    }
+}
+
+impl Add<&BeDOZa> for BeDOZa {
+    type Output = BeDOZa;
+
+    fn add(self, other: &BeDOZa) -> BeDOZa {
+        &self + other
+    }
+}
+
+impl Add for BeDOZa {
+    type Output = BeDOZa;
+
+    fn add(self, other: BeDOZa) -> BeDOZa {
+        &self + &other
+    }
+}
+
+impl Add<FE> for &BeDOZa {
+    type Output = BeDOZa;
+
+    fn add(self, constant: FE) -> BeDOZa {
+        BeDOZa {
+            bedoza_sender: self.bedoza_sender() + constant,
+            bedoza_receiver: self.bedoza_receiver() + constant,
+        }
+    }
+}
+
+impl Add<FE> for BeDOZa {
+    type Output = BeDOZa;
+
+    fn add(self, constant: FE) -> BeDOZa {
+        &self + constant
+    }
+}
+
+impl Sub<FE> for &BeDOZa {
+    type Output = BeDOZa;
+
+    fn sub(self, constant: FE) -> BeDOZa {
+        BeDOZa {
+            bedoza_sender: self.bedoza_sender() - constant,
+            bedoza_receiver: self.bedoza_receiver() - constant,
+        }
+    }
+}
+
+impl Sub<FE> for BeDOZa {
+    type Output = BeDOZa;
+
+    fn sub(self, constant: FE) -> BeDOZa {
+        &self - constant
+    }
+}
+
+impl Sub<&BeDOZa> for &BeDOZa {
+    type Output = BeDOZa;
+
+    fn sub(self, other: &BeDOZa) -> BeDOZa {
+        BeDOZa {
+            bedoza_sender: self.bedoza_sender() - other.bedoza_sender(),
+            bedoza_receiver: self.bedoza_receiver() - other.bedoza_receiver(),
+        }
+    }
+}
+
+impl Sub for BeDOZa {
+    type Output = BeDOZa;
+
+    fn sub(self, other: BeDOZa) -> BeDOZa {
+        &self - &other
+    }
+}
+
+impl Mul<FE> for &BeDOZa {
+    type Output = BeDOZa;
+
+    fn mul(self, constant: FE) -> BeDOZa {
+        BeDOZa {
+            bedoza_sender: self.bedoza_sender() * constant,
+            bedoza_receiver: self.bedoza_receiver() * constant,
+        }
+    }
+}
+
+impl Mul<FE> for BeDOZa {
+    type Output = BeDOZa;
+
+    fn mul(self, constant: FE) -> BeDOZa {
+        &self * constant
+    }
 }

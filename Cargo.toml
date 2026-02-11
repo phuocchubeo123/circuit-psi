@@ -10,6 +10,7 @@ rand = "0.10.0"
 anyhow = "1.0.101"
 swanky-field-binary = { git = "https://github.com/GaloisInc/swanky", rev = "50e0abad78ee276449243dfc51f6202588bc68eb" }
 swanky-serialization = { git = "https://github.com/GaloisInc/swanky", rev = "50e0abad78ee276449243dfc51f6202588bc68eb" }
+swanky-field = { git = "https://github.com/GaloisInc/swanky", rev = "50e0abad78ee276449243dfc51f6202588bc68eb" }
 
 [profile.release]
 lto = true

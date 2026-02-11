@@ -98,6 +98,7 @@ dependencies = [
  "curve25519-dalek",
  "rand 0.10.0",
  "rand_core 0.10.0",
+ "swanky-field",
  "swanky-field-binary",
  "swanky-serialization",
 ]

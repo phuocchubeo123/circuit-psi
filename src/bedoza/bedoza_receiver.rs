@@ -7,7 +7,7 @@ use crate::{
 };
 use anyhow::{anyhow, ensure, Result};
 
-use std::ops::{Add, AddAssign};
+use std::ops::{Add, Sub, Mul};
 
 // We assume that the offline phase is already done
 // https://eprint.iacr.org/2010/514.pdf
@@ -20,6 +20,10 @@ pub struct BeDOZaReceiver {
 }
 
 impl BeDOZaReceiver {
+    pub fn new(tag: FE, key: FE, side: bool) -> Self {
+        Self { tag, key, side }
+    }
+
     pub fn tag(&self) -> FE {
         self.tag
     }
@@ -30,52 +34,6 @@ impl BeDOZaReceiver {
 
     pub fn side(&self) -> bool {
         self.side
-    }
-
-    /// Add a public constant to an authenticated value.
-    /// Only add the constant to the share of side 0
-    pub fn add_constant(&self, constant: FE) -> BeDOZaReceiver {
-        if self.side() { // If side = true, don't do anything to the share
-            BeDOZaReceiver {
-                tag: self.tag(),
-                key: self.key(),
-                side: self.side(),
-            }
-        } else { // If side = false, add the constant to the share
-            BeDOZaReceiver {
-                tag: self.tag() + self.key() * constant,
-                key: self.key(),
-                side: self.side(),
-            }
-        }
-    }
-
-    pub fn add(&self, other: &BeDOZaReceiver) -> BeDOZaReceiver {
-        assert_eq!(self.key(), other.key(), "Key mismatch in BeDOZa addition: lhs = {:?}, rhs = {:?}", self.key(), other.key());
-        assert_eq!(self.side(), other.side(), "Side mismatch in BeDOZa addition: lhs = {:?}, rhs = {:?}", self.side(), other.side());
-        BeDOZaReceiver {
-            tag: self.tag() + other.tag(),
-            key: self.key(),
-            side: self.side(),
-        }
-    }
-
-    pub fn sub(&self, other: &BeDOZaReceiver) -> BeDOZaReceiver {
-        assert_eq!(self.key(), other.key(), "Key mismatch in BeDOZa subtraction: lhs = {:?}, rhs = {:?}", self.key(), other.key());
-        assert_eq!(self.side(), other.side(), "Side mismatch in BeDOZa subtraction: lhs = {:?}, rhs = {:?}", self.side(), other.side());
-        BeDOZaReceiver {
-            tag: self.tag() - other.tag(),
-            key: self.key(),
-            side: self.side(),
-        }
-    }
-
-    pub fn mult_constant(&self, constant: FE) -> BeDOZaReceiver {
-        BeDOZaReceiver {
-            tag: self.tag() * constant,
-            key: self.key(),
-            side: self.side(),
-        }
     }
 }
 
@@ -107,9 +65,9 @@ pub fn receive_open_shares(bedoza_receivers: &[BeDOZaReceiver], channel: &mut Tc
     Ok(values)
 }
 
-impl Add for BeDOZaReceiver {
+impl Add<&BeDOZaReceiver> for &BeDOZaReceiver {
     type Output = BeDOZaReceiver;
-    fn add(self, rhs: BeDOZaReceiver) -> BeDOZaReceiver {
+    fn add(self, rhs: &BeDOZaReceiver) -> BeDOZaReceiver {
         assert_eq!(self.key(), rhs.key(), "Key mismatch in BeDOZa addition: lhs = {:?}, rhs = {:?}", self.key(), rhs.key());
         assert_eq!(self.side(), rhs.side(), "Side mismatch in BeDOZa addition: lhs = {:?}, rhs = {:?}", self.side(), rhs.side());
         BeDOZaReceiver {
@@ -120,16 +78,103 @@ impl Add for BeDOZaReceiver {
     }
 }
 
-impl Add<FE> for BeDOZaReceiver {
+impl Add for BeDOZaReceiver {
     type Output = BeDOZaReceiver;
-
-    fn add(self, rhs: FE) -> BeDOZaReceiver {
-        self.add_constant(rhs)
+    fn add(self, other: BeDOZaReceiver) -> BeDOZaReceiver {
+        &self + &other
     }
 }
 
-impl AddAssign<FE> for BeDOZaReceiver {
-    fn add_assign(&mut self, rhs: FE) {
-        *self = self.add_constant(rhs);
+impl Add<FE> for &BeDOZaReceiver {
+    type Output = BeDOZaReceiver;
+
+    fn add(self, constant: FE) -> BeDOZaReceiver {
+        if self.side() { // If side = true, don't do anything to the share
+            BeDOZaReceiver {
+                tag: self.tag(),
+                key: self.key(),
+                side: self.side(),
+            }
+        } else { // If side = false, add the constant to the share
+            BeDOZaReceiver {
+                tag: self.tag() + self.key() * constant,
+                key: self.key(),
+                side: self.side(),
+            }
+        }
+    }
+}
+
+impl Add<FE> for BeDOZaReceiver {
+    type Output = BeDOZaReceiver;
+
+    fn add(self, constant: FE) -> BeDOZaReceiver {
+        &self + constant
+    }
+}
+
+impl Sub<FE> for &BeDOZaReceiver {
+    type Output = BeDOZaReceiver;
+
+    fn sub(self, constant: FE) -> BeDOZaReceiver {
+        if self.side() { // If side = true, don't do anything to the share
+            BeDOZaReceiver {
+                tag: self.tag(),
+                key: self.key(),
+                side: self.side(),
+            }
+        } else { // If side = false, subtract the constant from the share
+            BeDOZaReceiver {
+                tag: self.tag() - self.key() * constant,
+                key: self.key(),
+                side: self.side(),
+            }
+        }
+    }
+}
+
+impl Sub<FE> for BeDOZaReceiver {
+    type Output = BeDOZaReceiver;
+
+    fn sub(self, constant: FE) -> BeDOZaReceiver {
+        &self - constant
+    }
+}
+
+impl Sub<&BeDOZaReceiver> for &BeDOZaReceiver {
+    type Output = BeDOZaReceiver;
+    fn sub(self, rhs: &BeDOZaReceiver) -> BeDOZaReceiver {
+        assert_eq!(self.key(), rhs.key(), "Key mismatch in BeDOZa subtraction: lhs = {:?}, rhs = {:?}", self.key(), rhs.key());
+        assert_eq!(self.side(), rhs.side(), "Side mismatch in BeDOZa subtraction: lhs = {:?}, rhs = {:?}", self.side(), rhs.side());
+        BeDOZaReceiver {
+            tag: self.tag() - rhs.tag(),
+            key: self.key(),
+            side: self.side(),
+        }
+    }
+}
+
+impl Sub for BeDOZaReceiver {
+    type Output = BeDOZaReceiver;
+    fn sub(self, other: BeDOZaReceiver) -> BeDOZaReceiver {
+        &self - &other
+    }
+}
+
+impl Mul<FE> for &BeDOZaReceiver {
+    type Output = BeDOZaReceiver;
+    fn mul(self, constant: FE) -> BeDOZaReceiver {
+        BeDOZaReceiver {
+            tag: self.tag() * constant,
+            key: self.key(),
+            side: self.side(),
+        }
+    }
+}
+
+impl Mul<FE> for BeDOZaReceiver {
+    type Output = BeDOZaReceiver;
+    fn mul(self, constant: FE) -> BeDOZaReceiver {
+        &self * constant
     }
 }
