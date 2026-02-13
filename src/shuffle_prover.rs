@@ -65,6 +65,12 @@ pub fn shuffle_prover_step1(
     Ok(inv_k_plus_x_shares)
 }
 
+pub fn shuffle_prover_commit_permutation(
+    channel: &mut TcpChannel,
+) -> Result<()> {
+    unimplemented!()
+}
+
 pub fn shuffle_prover_step2(
     u: &[BeDOZa],
     permutation: &[usize],
@@ -106,7 +112,10 @@ pub fn shuffle_prover_step2(
     send_group_elements(&[multi_exp_pad], channel)
         .map_err(|e| anyhow!("Failed to send multi-exponentiation of pads: {}", e))?;
 
-    
+
+    // -------------------------------
+    // Next we move on to shuffling and raising these values to the same (masking power)
+    // We also need to prove this thing is done correctly.
 
     unimplemented!()
 }

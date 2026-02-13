@@ -10,11 +10,13 @@ use lambdaworks_math::elliptic_curve::{
     short_weierstrass::curves::stark_curve::StarkCurve,
     traits::IsEllipticCurve,
 };
+use lambdaworks_math::msm::pippenger;
 use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 
 pub type CurvePoint = StarkPoint;
 const GROUP_POINT_BYTES: usize = 96;
 
+#[derive(Clone)]
 pub struct Group {
     point: CurvePoint,
 }
@@ -43,6 +45,14 @@ impl Group {
     pub fn from_point(point: CurvePoint) -> Self {
         Self { point }
     }
+}
+
+pub fn msm_pippenger(points: &[Group], scalars: &[FE]) -> Result<Group> {
+    let point_vec: Vec<CurvePoint> = points.iter().map(|g| g.point.clone()).collect();
+    let scalar_vec = scalars.iter().map(|s| s.representative()).collect::<Vec<_>>();
+    let out_point = pippenger::msm::<4, CurvePoint>(&scalar_vec, &point_vec)
+        .map_err(|e| anyhow!("Failed to compute Pippenger MSM: {}", e))?;
+    Ok(Group::from_point(out_point))
 }
 
 impl Add for Group {

@@ -1,13 +1,14 @@
 use crate::{
     bedoza::{
-        defines::FE,
-        BeDOZa, BeDOZaTriple, receive_share_values,
-        batch_multiply,
-        open_values_receive, open_values_send,
-    },
-    tcp_channel::TcpChannel,
+        BeDOZa, BeDOZaTriple, batch_multiply, 
+        defines::{FE, random_fe_vec_from_rng}, 
+        open_values_receive, open_values_send, receive_share_values
+    }, 
+    group::{Group, receive_group_elements, msm_pippenger}, 
+    tcp_channel::TcpChannel
 };
-use anyhow::{anyhow, Result};
+use rand::{RngExt, rngs::StdRng, SeedableRng};
+use anyhow::{ensure, anyhow, Result};
 
 pub fn shuffle_verifier_step1(
     authenticated_key: &BeDOZa,
@@ -60,12 +61,53 @@ pub fn shuffle_verifier_step1(
     Ok(inv_k_plus_x_shares)
 }
 
+pub fn shuffle_verifier_commit_permutation(
+    channel: &mut TcpChannel,
+) -> Result<()> {
+    unimplemented!()
+}
+
 pub fn shuffle_verifier_step2(
     u: &[BeDOZa],
     prepared_triple_shares: &[BeDOZaTriple],
     channel: &mut TcpChannel,
 ) -> Result<Vec<BeDOZa>> {
+    // Receive g^u1_sender, g^u2_sender, ... from prover and also verify them 
+    let g_u_senders = receive_group_elements(channel)
+        .map_err(|e| anyhow!("Failed to receive g^ui from prover: {}", e))?;
 
+    // Sample challenge seed and send to prover
+    let mut rng = rand::rng();
+    let challenge_seed: [u8; 32] = rng.random::<[u8; 32]>();
+    channel.send(&challenge_seed)
+        .map_err(|e| anyhow!("Failed to send challenge seed to prover: {}", e))?;
+    // Generate challenge randomness from the seed
+    let mut rng = StdRng::from_seed(challenge_seed);
+    let random_coeffs = random_fe_vec_from_rng(&mut rng, u.len())
+        .map_err(|e| anyhow!("Failed to generate random coefficients from seed: {}", e))?;
+
+    // Receive g^{pad1*r1} * g^{pad2*r2} * ... g^{padn*rn} from prover to later verify the share exponents
+    let multi_exp_pad_u_prover = receive_group_elements(channel)
+        .map_err(|e| anyhow!("Failed to receive multi-exponentiation for pads from prover: {}", e))?[0].clone();
+    // Now verify by verifying that random linear combination of the equations tag = key * val + pad
+    // Take multi exponentiations of g^ui_sender with the random coefficients to get g^{sum(ci*ui_sender)}
+    let multi_exp_u_prover = msm_pippenger(&g_u_senders, &random_coeffs)
+        .map_err(|e| anyhow!("Failed to compute multi-exponentiation for g^ui_sender: {}", e))?;
+    // Take multi exponentiations of g^{ri*tag_i} 
+    let tag_prover: Vec<FE> = u.iter()
+        .map(|share| share.bedoza_receiver().tag())
+        .collect();
+    let tag_prover_scalar_sum = tag_prover.iter()
+        .zip(random_coeffs.iter())
+        .map(|(&tag, &coeff)| tag * coeff)
+        .fold(FE::zero(), |acc, val| acc + val);
+    let multi_exp_tag_prover = Group::base_point().scalar_mul(&tag_prover_scalar_sum);
+
+    // Now can finally verify the equation by checking multi_exp_tag_prover == multi_exp_u_prover^key_u_prover + multi_exp_pad_u_prover
+    let key_u_prover = u[0].bedoza_receiver().key(); // key should be the same across all shares, so just take the first one
+    let multi_exp_u_prover_key = multi_exp_u_prover.scalar_mul(&key_u_prover);
+    let expected_multi_exp = multi_exp_u_prover_key + multi_exp_pad_u_prover;
+    ensure!(multi_exp_tag_prover.as_point() == expected_multi_exp.as_point(), "Verification failed for shuffle proof.");
 
     unimplemented!()
 }
