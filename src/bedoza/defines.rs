@@ -1,18 +1,15 @@
-use lambdaworks_math::field::
+use crate::stark_scalar::{random_scalars, random_scalars_from_rng, StarkScalar};
 use anyhow::{anyhow, Result};
-use rand::RngExt;
+use rand::Rng;
 
-pub type FE = F128b;
+pub type FE = StarkScalar;
 
 pub fn random_fe_vec(cnt: usize) -> Result<Vec<FE>> {
-    let mut rng = rand::rng();
-    let mut res: Vec<FE> = Vec::with_capacity(cnt);
-    for _ in 0..cnt {
-        let mut bytes = [0u8; 16];
-        rng.fill(&mut bytes);
-        let fe = FE::from_bytes(&bytes.into())
-            .map_err(|e| anyhow!("Failed to deserialize random FE bytes: {}", e))?;
-        res.push(fe);
-    }
-    Ok(res)
+    random_scalars(cnt)
+        .map_err(|e| anyhow!("Failed to deserialize random scalar bytes: {:?}", e))
+}
+
+pub fn random_fe_vec_from_rng(rng: &mut impl Rng, cnt: usize) -> Result<Vec<FE>> {
+    random_scalars_from_rng(rng, cnt)
+        .map_err(|e| anyhow!("Failed to deserialize random scalar bytes: {:?}", e))
 }

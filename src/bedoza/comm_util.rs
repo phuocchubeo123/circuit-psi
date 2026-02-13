@@ -2,13 +2,13 @@ use crate::{
     tcp_channel::TcpChannel,
     bedoza::defines::FE,
 };
+use lambdaworks_math::traits::ByteConversion;
 use anyhow::{anyhow, Result};
-use swanky_serialization::CanonicalSerialize;
 
-const FE_BYTES: usize = 16;
+const FE_BYTES: usize = 32;
 
 pub fn send_fe(value: FE, channel: &mut TcpChannel) -> Result<()> {
-    let bytes = value.to_bytes();
+    let bytes = value.to_bytes_le();
     channel.send(bytes.as_ref())
 }
 
@@ -19,13 +19,13 @@ pub fn receive_fe(channel: &mut TcpChannel) -> Result<FE> {
         .try_into()
         .map_err(|_| anyhow!("Expected {} bytes for FE, got {}", FE_BYTES, raw_len))?;
 
-    FE::from_bytes(&arr.into()).map_err(|e| anyhow!("Invalid FE encoding: {}", e))
+    FE::from_bytes_le(&arr).map_err(|e| anyhow!("Invalid FE encoding: {:?}", e))
 }
 
 pub fn send_fe_vec(values: &[FE], channel: &mut TcpChannel) -> Result<()> {
     let mut buf = Vec::with_capacity(values.len() * FE_BYTES);
     for value in values {
-        buf.extend_from_slice(value.to_bytes().as_ref());
+        buf.extend_from_slice(value.to_bytes_le().as_ref());
     }
     channel.send(&buf)
 }
@@ -46,8 +46,8 @@ pub fn receive_fe_vec(channel: &mut TcpChannel) -> Result<Vec<FE>> {
         let arr: [u8; FE_BYTES] = chunk
             .try_into()
             .map_err(|_| anyhow!("Internal chunk conversion failed"))?;
-        let fe = FE::from_bytes(&arr.into())
-            .map_err(|e| anyhow!("Invalid FE encoding in vector: {}", e))?;
+        let fe = FE::from_bytes_le(&arr)
+            .map_err(|e| anyhow!("Invalid FE encoding in vector: {:?}", e))?;
         out.push(fe);
     }
 
