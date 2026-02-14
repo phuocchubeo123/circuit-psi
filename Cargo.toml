@@ -9,6 +9,8 @@ rand_core = "0.10.0"
 rand = "0.10.0"
 anyhow = "1.0.101"
 lambdaworks-math = "0.13.0"
+rayon = "1.11.0"
+fourq = "0.1.6"
 
 [profile.release]
 lto = true
