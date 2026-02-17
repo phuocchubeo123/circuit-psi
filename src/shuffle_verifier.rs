@@ -1,10 +1,6 @@
 use crate::{
     bedoza::{
-        BeDOZa, BeDOZaTriple, batch_multiply, take_vec_prod,
-        bedoza_sender::BeDOZaSender,
-        comm_util::{receive_fe, receive_fe_vec},
-        defines::{FE, random_fe_vec_from_rng}, 
-        open_values_receive, open_values_send, receive_share_values, share_values
+        BeDOZa, BeDOZaTriple, batch_multiply, bedoza_receiver::BeDOZaReceiver, bedoza_sender::{BeDOZaSender, share_values_sender}, comm_util::{receive_fe, receive_fe_vec}, defines::{FE, random_fe_vec_from_rng}, open_values_receive, open_values_send, receive_share_values, share_values, take_vec_prod
     }, 
     group::{Group, msm_pippenger, receive_group_elements, send_group_elements}, 
     tcp_channel::TcpChannel
@@ -65,37 +61,75 @@ pub fn shuffle_verifier_step1(
 
 pub fn shuffle_verifier_step2_permutation_commit(
     permutation: &[usize],
+    s: FE,
+    s_inv: FE,
     s_share: &BeDOZa,
     s_inv_share: &BeDOZa,
     verifier_shares: &[BeDOZaSender],
     prepared_permutation_shares: &[BeDOZa],
     prepared_permutation_triple_shares: &[BeDOZaTriple],
+    prepared_verifier_shares_times_s_triple: &[BeDOZaTriple],
+    verifier_key: FE,
     channel: &mut TcpChannel,
 ) -> Result<(Vec<BeDOZa>, Vec<BeDOZa>)> {
     // This function not only commits a permutation pi(1), pi(2), ..., pi(n)
-    // It also lets the prover sends another random challenge x, and both commit to x^pi(1), x^pi(2), ..., x^pi(n), which is later useful for the shuffled OPRF itself
-    // We use the first (0-index) entry in the vec to store 0, which would remain 0 in the permuted version as well (dummy entry to make permutation 1-indexed)
+    // It also lets the prover send another random challenge x, and both commit to x^pi(1), x^pi(2), ..., x^pi(n), which is later useful for the shuffled OPRF itself
+    // It would also let the prover send another random challenge y for the verifier_share_permute proving step, along with y's powers
+    // Also commit to all permuted verifier shares * s, for the verifier_share_permute proving step
+    // Everything is 0-indexed, so be careful when indexing
 
     // First simply commit this permutation
     let permutation_fe: Vec<FE> = permutation.iter().map(|&idx| FE::from(idx as u64)).collect();
     let permuted_shares = share_values(&permutation_fe, prepared_permutation_shares, channel)
         .map_err(|e| anyhow!("Failed to share permutation using BeDOZa: {}", e))?;
 
-    // Receive the challenge x from the prover, and commit to x^pi(1), x^pi(2), ..., x^pi(n) using BeDOZa
-    let x = receive_fe(channel)
+    //---------
+    // Receive the challenges x and y from the prover, and commit to the secret-shared powers using BeDOZa
+    let challenges = receive_fe_vec(channel)
         .map_err(|e| anyhow!("Failed to receive permutation challenge: {}", e))?;
+    let x = challenges[0];
+    let y = challenges[1];
 
     // Compute x^pi(1), x^pi(2), ..., x^pi(n)
     let mut non_permuted_x_powers = Vec::new();
-    non_permuted_x_powers.push(FE::one());
-    for _ in 1..permutation.len() {
+    non_permuted_x_powers.push(x);
+    for _ in 2..permutation.len() {
         non_permuted_x_powers.push(non_permuted_x_powers.last().unwrap() * x);
     }
-    let permuted_x_powers: Vec<FE> = permutation.iter().map(|&idx| non_permuted_x_powers[idx]).collect();
+    let permuted_x_powers: Vec<FE> = permutation.iter().map(|&idx| non_permuted_x_powers[idx-1]).collect();
+    // Compute y^pi(1), y^pi(2), ..., y^pi(n)
+    let mut non_permuted_y_powers = Vec::new();
+    non_permuted_y_powers.push(FE::one());
+    for _ in 1..permutation.len() {
+        non_permuted_y_powers.push(non_permuted_y_powers.last().unwrap() * y);
+    }
+    let permuted_y_powers: Vec<FE> = permutation.iter().map(|&idx| non_permuted_y_powers[idx]).collect();
 
-    // Commit to the permuted x powers using BeDOZa
-    let permuted_x_powers_shares = share_values(&permuted_x_powers, prepared_permutation_shares, channel)
+    // Commit to the permuted x powers and y powers using BeDOZa
+    let permuted_powers_shares = share_values(&[permuted_x_powers, permuted_y_powers].concat(), prepared_permutation_shares, channel)
         .map_err(|e| anyhow!("Failed to share permuted x powers using BeDOZa: {}", e))?;
+    let (permuted_x_powers_shares, permuted_y_powers_shares) = permuted_powers_shares.split_at(permutation.len());
+
+    //-------
+    // Commit to u_pi(1)_verifier * s, u_pi(2)_verifier * s, ..., u_pi(n)_verifier * s
+
+    // First, commit to u1_verifier * s, u2_verifier * s, ..., un_verifier * s by doing batch multiplication
+    let u_verifier_zero_parts: Vec<BeDOZaReceiver> = (0..verifier_shares.len()).map(|_| {
+        BeDOZaReceiver::new(FE::zero(), verifier_key, false) // dummy prover share for BeDOZa of verifier share
+    }).collect(); 
+    let u_verifier_bedoza: Vec<BeDOZa> = verifier_shares.iter()
+        .zip(u_verifier_zero_parts.iter()) 
+        .map(|(&x, &y)| {
+            BeDOZa::new(x, y)
+        }).collect();
+    let u_verifier_times_s_shares = batch_multiply(&u_verifier_bedoza, &vec![*s_share; verifier_shares.len()], prepared_verifier_shares_times_s_triple, channel)
+        .map_err(|e| anyhow!("Failed to do batch_multiply between verifer shares and s: {}", e))?;
+
+    // Now, just commit to u_pi(1)_verifier * s, u_pi(2)_verifier * s, ..., u_pi(n)_verifier * s, then prove consistency later
+    let u_verifier_times_s: Vec<FE> = verifier_shares.iter()
+        .map(|x| x.val() * s)
+        .collect();
+    let permuted_u_verifier_times_s = 
 
     // Now need to prove that this is a valid permutation too
     // Receive the challenges r, a from the prover
@@ -103,8 +137,9 @@ pub fn shuffle_verifier_step2_permutation_commit(
         .map_err(|e| anyhow!("Failed to receive permutation challenge: {}", e))?;
     let r = challenges[0];
     let a = challenges[1];
+    let b = challenges[2];
 
-    // Locally obtain shares for (a * pi(1) + x^pi(1) - r), (a * pi(2) + x^pi(2) - r), ..., (a * pi(n) + x^pi(n) - r)
+    // Locally obtain shares for (pi(1) + a * x^pi(1) + b * x^pi(1) - r), 
     let permutation_minus_r_share: Vec<BeDOZa> = permuted_shares.iter()
         .zip(permuted_x_powers_shares.iter())
         .map(|(perm_share, &x_power_share)| {
@@ -156,14 +191,62 @@ pub fn shuffle_verifier_multiexponentiation_proof(
     Ok(())
 }
 
+pub fn shuffle_verifier_share_s(
+    s: FE,
+    prepared_s_share: &BeDOZa,
+    prepared_s_inv_randomness: &BeDOZa,
+    prepared_s_inv_triple: &BeDOZaTriple,
+    prepared_s_verifier_share: &BeDOZaSender,
+    prepared_s_verifier_consistency_randomness: &BeDOZa,
+    prepared_s_verifier_consistency_triple: &BeDOZaTriple,
+    channel: &mut TcpChannel,
+) -> Result<(BeDOZa, BeDOZa, BeDOZaSender)> {
+    // Share s with BeDOZa
+    let s_share = share_values(&[s], &[*prepared_s_share], channel)
+        .map_err(|e| anyhow!("Failed to share mask s with prover: {}", e))?[0];
+
+    // Multiply with random r, then would be able to inverse
+    let s_times_r_share = batch_multiply(&[s_share], &[*prepared_s_inv_randomness], &[*prepared_s_inv_triple], channel)
+        .map_err(|e| anyhow!("Failed to multiply and get s * r: {}", e))?[0];
+    // Reconstruct s * r
+    open_values_send(&[s_times_r_share], channel)
+        .map_err(|e| anyhow!("Failed to open s*r to prover: {}", e))?;
+    let s_times_r = open_values_receive(&[s_times_r_share], channel)
+        .map_err(|e| anyhow!("Failed to receive s*r from prover: {}", e))?[0];
+    // Inverse s*r locally, then multiply locally with share of r to get share of 1/s
+    let s_times_r_inv = s_times_r.inv().unwrap();
+    let s_inv_share = prepared_s_inv_randomness * s_times_r_inv;
+
+    // Share a bedoza_sender for s
+    let s_verifier_share = share_values_sender(&[s], &[*prepared_s_verifier_share], channel)
+        .map_err(|e| anyhow!("Failed to share bedoza_sender for s: {}", e))?[0];
+    // Prove by subtracting s-s_verifier
+    let s_verifiier_consistency_proof = BeDOZa::new(*s_share.bedoza_sender() - s_verifier_share, *s_share.bedoza_receiver());
+    // Multiply with random value r to get r*(s-s_verifier). The prover will check whether this value is equal to 0.
+    let s_verifier_consistency_times_r = batch_multiply(
+        &[s_verifiier_consistency_proof], 
+        &[*prepared_s_verifier_consistency_randomness], 
+        &[*prepared_s_verifier_consistency_triple], 
+        channel
+    ).map_err(|e| anyhow!("Failed to multiply to get r * (s - s_verifier): {}", e))?[0];
+    // Open this for prover to check if it is equal to 0. The verifier job here is done.
+    open_values_send(&[s_verifier_consistency_times_r], channel)
+        .map_err(|e| anyhow!("Failed to open r * (s - s_verifier): {}", e))?;
+
+    Ok((s_share, s_inv_share, s_verifier_share))
+}
+
 pub fn shuffle_verifier_step2(
     u: &[BeDOZa],
     permutation: &[usize],
     prepared_permutation_shares: &[BeDOZa],
     prepared_permutation_triple_shares: &[BeDOZaTriple],
     prepared_s_share: &BeDOZa,
-    prepared_s_inv_share: &BeDOZa,
-    prepared_s_consistency_triple: &BeDOZaTriple,
+    prepared_s_inv_randomness: &BeDOZa, 
+    prepared_s_inv_triple: &BeDOZaTriple, 
+    prepared_s_verifier_share: &BeDOZaSender, 
+    prepared_s_verifier_consistency_randomness: &BeDOZa, 
+    prepared_s_verifier_consistency_triple: &BeDOZaTriple, 
     prepared_x_powers_divided_by_s_triples: &[BeDOZaTriple],
     channel: &mut TcpChannel,
 ) -> Result<Vec<BeDOZa>> {
@@ -220,16 +303,17 @@ pub fn shuffle_verifier_step2(
     // Firstly generate this mask s and secret share both s and 1/s it with the prover
     let s = random_fe_vec_from_rng(&mut rng, 1)?[0];
     let s_inv = s.inv().map_err(|e| anyhow!("Failed to invert mask s: {:?}", e))?;
-    let s_share = share_values(&[s], &[*prepared_s_share], channel)
-        .map_err(|e| anyhow!("Failed to share mask s with prover: {}", e))?[0];
-    let s_inv_share = share_values(&[s_inv], &[*prepared_s_inv_share], channel)
-        .map_err(|e| anyhow!("Failed to share inverse mask s with prover: {}", e))?[0];
-    // Prove it too
-    let s_consistency_proof = batch_multiply(&[s_share], &[s_inv_share], &[*prepared_s_consistency_triple], channel)
-        .map_err(|e| anyhow!("Failed to prove consistency of mask s and 1/s: {}", e))?[0];
-    // Open this supposed share of s * 1/s to the prover. The prover will check if it is equal to 1. The verifier's job here is done.
-    open_values_send(&[s_consistency_proof], channel)
-        .map_err(|e| anyhow!("Failed to send consistency proof for mask s: {}", e))?;
+
+    let (s_share, s_inv_share, s_verifier_share) = shuffle_verifier_share_s(
+        s, 
+        prepared_s_share, 
+        prepared_s_inv_randomness, 
+        prepared_s_inv_triple, 
+        prepared_s_verifier_share, 
+        prepared_s_verifier_consistency_randomness, 
+        prepared_s_verifier_consistency_triple, 
+        channel
+    ).map_err(|e| anyhow!("Failed to share s, s_inv and s_verifier: {}", e))?;
 
 
     // Permute g^u1_sender, g^u2_sender, ..., g^un_sender into g^u_pi(1)_sender, g^u_pi(2)_sender, ..., g^u_pi(n)_sender

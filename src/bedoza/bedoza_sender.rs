@@ -3,10 +3,10 @@ use crate::{
         comm_util::send_fe_vec,
         defines::FE,
     },
-    tcp_channel::TcpChannel
+    tcp_channel::TcpChannel,
 };
+use anyhow::{anyhow, ensure, Result};
 use std::ops::{Add, Mul, Sub};
-use anyhow::{anyhow, Result};
 
 #[derive(Copy, Clone)]
 pub struct BeDOZaSender {
@@ -33,14 +33,47 @@ impl BeDOZaSender {
     }
 }
 
-pub fn send_open_shares(bedoza_senders: &[BeDOZaSender], channel: &mut TcpChannel) -> Result<()> {
-    let vals: Vec<FE> = bedoza_senders.iter().map(|bedoza_sender| bedoza_sender.val()).collect();
-    let pads: Vec<FE> = bedoza_senders.iter().map(|bedoza_sender| bedoza_sender.pad()).collect();
+pub fn share_values_sender(
+    vals: &[FE],
+    prepared_bedoza_senders: &[BeDOZaSender],
+    channel: &mut TcpChannel,
+) -> Result<Vec<BeDOZaSender>> {
+    ensure!(
+        vals.len() == prepared_bedoza_senders.len(),
+        "Length mismatch between vals and prepared_bedoza_senders: lhs = {}, rhs = {}",
+        vals.len(),
+        prepared_bedoza_senders.len()
+    );
 
-    send_fe_vec(&vals, channel)
-        .map_err(|e| anyhow!("Failed to send vals: {}", e))?;
-    send_fe_vec(&pads, channel)
-        .map_err(|e| anyhow!("Failed to send pads: {}", e))?;
+    // Mask the values with prepared randomness
+    let masked_vals: Vec<FE> = vals.iter()
+        .zip(prepared_bedoza_senders.iter())
+        .map(|(x, r)| x - r.val())
+        .collect();
+
+    // Send these masked values to the receiver
+    send_fe_vec(&masked_vals, channel).map_err(|e| anyhow!("Failed to send fe values: {}", e))?;
+
+    let bedoza_shared_senders: Vec<BeDOZaSender> = prepared_bedoza_senders.iter()
+        .zip(masked_vals.iter())
+        .map(|(x, y)| x + *y)
+        .collect();
+
+    Ok(bedoza_shared_senders)
+}
+
+pub fn send_open_shares(bedoza_senders: &[BeDOZaSender], channel: &mut TcpChannel) -> Result<()> {
+    let vals: Vec<FE> = bedoza_senders
+        .iter()
+        .map(|bedoza_sender| bedoza_sender.val())
+        .collect();
+    let pads: Vec<FE> = bedoza_senders
+        .iter()
+        .map(|bedoza_sender| bedoza_sender.pad())
+        .collect();
+
+    send_fe_vec(&vals, channel).map_err(|e| anyhow!("Failed to send vals: {}", e))?;
+    send_fe_vec(&pads, channel).map_err(|e| anyhow!("Failed to send pads: {}", e))?;
 
     Ok(())
 }
@@ -49,7 +82,11 @@ impl Add<&BeDOZaSender> for &BeDOZaSender {
     type Output = BeDOZaSender;
 
     fn add(self, other: &BeDOZaSender) -> BeDOZaSender {
-        assert_eq!(self.side(), other.side(), "Cannot add BeDOZa senders from different sides");
+        assert_eq!(
+            self.side(),
+            other.side(),
+            "Cannot add BeDOZa senders from different sides"
+        );
         BeDOZaSender {
             val: self.val() + other.val(),
             pad: self.pad() + other.pad(),
@@ -70,13 +107,15 @@ impl Add<FE> for &BeDOZaSender {
     type Output = BeDOZaSender;
 
     fn add(self, constant: FE) -> BeDOZaSender {
-        if self.side() { // If side = true, don't do anything to the share
+        if self.side() {
+            // If side = true, don't do anything to the share
             BeDOZaSender {
                 val: self.val(),
                 pad: self.pad(),
                 side: self.side(),
             }
-        } else { // If side = false, add the constant to the share
+        } else {
+            // If side = false, add the constant to the share
             BeDOZaSender {
                 val: self.val() + constant,
                 pad: self.pad(),
@@ -98,13 +137,15 @@ impl Sub<FE> for &BeDOZaSender {
     type Output = BeDOZaSender;
 
     fn sub(self, constant: FE) -> BeDOZaSender {
-        if self.side() { // If side = true, don't do anything to the share
+        if self.side() {
+            // If side = true, don't do anything to the share
             BeDOZaSender {
                 val: self.val(),
                 pad: self.pad(),
                 side: self.side(),
             }
-        } else { // If side = false, subtract the constant from the share
+        } else {
+            // If side = false, subtract the constant from the share
             BeDOZaSender {
                 val: self.val() - constant,
                 pad: self.pad(),
@@ -126,7 +167,11 @@ impl Sub<&BeDOZaSender> for &BeDOZaSender {
     type Output = BeDOZaSender;
 
     fn sub(self, other: &BeDOZaSender) -> BeDOZaSender {
-        assert_eq!(self.side(), other.side(), "Cannot subtract BeDOZa senders from different sides");
+        assert_eq!(
+            self.side(),
+            other.side(),
+            "Cannot subtract BeDOZa senders from different sides"
+        );
         BeDOZaSender {
             val: self.val() - other.val(),
             pad: self.pad() - other.pad(),
@@ -161,4 +206,4 @@ impl Mul<FE> for BeDOZaSender {
     fn mul(self, constant: FE) -> BeDOZaSender {
         &self * constant
     }
-}   
+}

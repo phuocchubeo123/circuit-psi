@@ -53,12 +53,12 @@ pub fn share_values(
     let prepared_bedoza_receivers = prepared_bedoza_shares.iter().map(|share| *share.bedoza_receiver()).collect::<Vec<BeDOZaReceiver>>();
     let prepared_bedoza_senders = prepared_bedoza_shares.iter().map(|share| *share.bedoza_sender()).collect::<Vec<BeDOZaSender>>();
 
-    // Open the prepared shared randomness to the sharer
+    // Receive the opening for prepared shared randomness from the receiver
     let open_prepared_bedoza_receivers = receive_open_shares(&prepared_bedoza_receivers, channel)
         .map_err(|e| anyhow!("Failed to receive open BeDOZaReceiver shares: {}", e))?;
     let open_prepared_random_values: Vec<FE> = open_prepared_bedoza_receivers.iter()
         .zip(prepared_bedoza_senders.iter())
-        .map(|(&x, y)| x + y.val()).collect();
+        .map(|(x, y)| x + y.val()).collect();
 
     // Then the sharer masks his values and sends them to the other party
     let masked_vals = vals.iter()
@@ -88,9 +88,11 @@ pub fn receive_share_values(
     let prepared_bedoza_receivers = prepared_bedoza_shares.iter().map(|share| *share.bedoza_receiver()).collect::<Vec<BeDOZaReceiver>>();
     let prepared_bedoza_senders = prepared_bedoza_shares.iter().map(|share| *share.bedoza_sender()).collect::<Vec<BeDOZaSender>>();
 
+    // Open the prepared shared randomness to the sender
     send_open_shares(&prepared_bedoza_senders, channel)
         .map_err(|e| anyhow!("Failed to send open BeDOZaSender shares: {}", e))?;
 
+    // Receive masked sender's values
     let masked_vals = receive_fe_vec(channel)
         .map_err(|e| anyhow!("Failed to receive masked vals: {}", e))?;
 
