@@ -1,10 +1,11 @@
 use crate::{
     bedoza::{
-        BeDOZa, BeDOZaTriple, batch_multiply, 
+        BeDOZa, BeDOZaTriple, batch_multiply, take_vec_prod,
+        comm_util::receive_fe,
         defines::{FE, random_fe_vec_from_rng}, 
-        open_values_receive, open_values_send, receive_share_values
+        open_values_receive, open_values_send, receive_share_values, share_values
     }, 
-    group::{Group, receive_group_elements, msm_pippenger}, 
+    group::{Group, msm_pippenger, receive_group_elements}, 
     tcp_channel::TcpChannel
 };
 use rand::{RngExt, rngs::StdRng, SeedableRng};
@@ -62,14 +63,43 @@ pub fn shuffle_verifier_step1(
 }
 
 pub fn shuffle_verifier_commit_permutation(
+    permutation: &[usize],
+    prepared_permutation_shares: &[BeDOZa],
+    prepared_permutation_triple_shares: &[BeDOZaTriple],
     channel: &mut TcpChannel,
-) -> Result<()> {
-    unimplemented!()
+) -> Result<Vec<BeDOZa>> {
+    // First simply commit this permutation
+    let permutation_fe: Vec<FE> = permutation.iter().map(|&idx| FE::from(idx as u64)).collect();
+    let permuted_shares = share_values(&permutation_fe, prepared_permutation_shares, channel)
+        .map_err(|e| anyhow!("Failed to share permutation using BeDOZa: {}", e))?;
+
+    // Now need to prove that this is a valid permutation too
+    // Receive the challenge r from the prover
+    let challenge = receive_fe(channel)
+        .map_err(|e| anyhow!("Failed to receive permutation challenge: {}", e))?;
+    // Locally obtain pi(1) - r, pi(2) - r, ..., pi(n) - r
+    let permutation_minus_challenge_share: Vec<BeDOZa> = permuted_shares.iter()
+        .map(|share| share - challenge)
+        .collect();
+    // Multiply them all together to get share for (pi(1) - r) * (pi(2) - r) * ... * (pi(n) - r)
+    let permutation_minus_challenge_prod = take_vec_prod(
+        &permutation_minus_challenge_share,
+        prepared_permutation_triple_shares,
+        channel,
+    ).map_err(|e| anyhow!("Failed to compute product share for permutation verification: {}", e))?;
+
+    // Open the product share to the prover. If it is correct the prover will just proceed. Job for verifier is done.
+    // Sending verifier share to prover
+    open_values_send(&[permutation_minus_challenge_prod], channel)
+        .map_err(|e| anyhow!("Failed to send permutation product share: {}", e))?;
+
+    Ok(permuted_shares)
 }
 
 pub fn shuffle_verifier_step2(
     u: &[BeDOZa],
-    prepared_triple_shares: &[BeDOZaTriple],
+    permutation: &[usize],
+    prepared_s_share: &BeDOZa,
     channel: &mut TcpChannel,
 ) -> Result<Vec<BeDOZa>> {
     // Receive g^u1_sender, g^u2_sender, ... from prover and also verify them 
@@ -108,6 +138,17 @@ pub fn shuffle_verifier_step2(
     let multi_exp_u_prover_key = multi_exp_u_prover.scalar_mul(&key_u_prover);
     let expected_multi_exp = multi_exp_u_prover_key + multi_exp_pad_u_prover;
     ensure!(multi_exp_tag_prover.as_point() == expected_multi_exp.as_point(), "Verification failed for shuffle proof.");
+
+
+    //------------------------
+    // We now move on to doing shuffling
+    // First step is the verifier sends back the exponentiations, masked by a mask, and also permute them
+
+    // Firstly generate this mask s and secret share it with the prover
+    let s = random_fe_vec_from_rng(&mut rng, 1)?[0];
+    let s_share = share_values(&[s], &[*prepared_s_share], channel)
+        .map_err(|e| anyhow!("Failed to share mask s with prover: {}", e))?[0];
+
 
     unimplemented!()
 }

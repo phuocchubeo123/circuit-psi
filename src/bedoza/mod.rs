@@ -17,6 +17,7 @@ use anyhow::{anyhow, ensure, Result};
 
 // Contains some functionalities for BeDOZa here
 
+#[derive(Clone, Copy)]
 pub struct BeDOZa {
     bedoza_sender: BeDOZaSender,
     bedoza_receiver: BeDOZaReceiver,
@@ -186,6 +187,53 @@ pub fn batch_multiply(
         }).collect();
 
     Ok(xy_shares)
+}
+
+pub fn take_vec_prod(
+    shares: &[BeDOZa],
+    triple_shares: &[BeDOZaTriple],
+    channel: &mut TcpChannel,
+) -> Result<BeDOZa> {
+    ensure!(!shares.is_empty(), "Cannot take product of an empty vector of shares");
+
+    let mut current_len = shares.len();
+    let mut triples_used = 0;
+    let mut new_shares = shares.to_vec();
+    let mut current_number_of_shares = 0;
+
+    loop {
+        if current_len == 1 {
+            break;
+        }
+        let half_len = current_len / 2;
+        let (left, right) = new_shares[current_number_of_shares..current_number_of_shares + current_len].split_at(half_len);
+        current_number_of_shares += current_len;
+
+        ensure!(
+            triples_used + half_len <= triple_shares.len(),
+            "Not enough triple shares to take product: need at least {}, got {}",
+            triples_used + half_len,
+            triple_shares.len()
+        );
+
+        if right.len() > left.len() {
+            let last_share_right = *right.last().unwrap();
+            let multiplied_shares = batch_multiply(left, &right[..half_len], &triple_shares[triples_used..triples_used + half_len], channel)
+                .map_err(|e| anyhow!("Failed to batch multiply shares while taking vector product: {}", e))?;
+            new_shares.extend(multiplied_shares);
+            new_shares.push(last_share_right);
+            current_len = half_len + 1;
+        } else {
+            let multiplied_shares = batch_multiply(left, right, &triple_shares[triples_used..triples_used + half_len], channel)
+                .map_err(|e| anyhow!("Failed to batch multiply shares while taking vector product: {}", e))?;
+            new_shares.extend(multiplied_shares);
+            current_len = half_len;
+        }
+
+        triples_used += half_len;
+    }
+
+    Ok(*new_shares.last().unwrap())
 }
 
 impl Add<&BeDOZa> for &BeDOZa {

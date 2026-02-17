@@ -1,10 +1,9 @@
 use crate::{
     bedoza::{
-        BeDOZa, BeDOZaTriple, 
-        batch_multiply, 
-        defines::{FE, random_fe_vec_from_rng}, 
-        open_values_receive, open_values_send,
-        share_values
+        BeDOZa, BeDOZaTriple, batch_multiply, comm_util::send_fe, 
+        defines::{FE, random_fe_vec, random_fe_vec_from_rng}, 
+        open_values_receive, open_values_send, receive_share_values, share_values,
+        take_vec_prod,
     }, 
     group::{Group, send_group_elements}, 
     tcp_channel::TcpChannel,
@@ -66,14 +65,45 @@ pub fn shuffle_prover_step1(
 }
 
 pub fn shuffle_prover_commit_permutation(
+    prepared_permutation_shares: &[BeDOZa],
+    prepared_permutation_triple_shares: &[BeDOZaTriple],
     channel: &mut TcpChannel,
-) -> Result<()> {
-    unimplemented!()
+) -> Result<Vec<BeDOZa>> {
+    // First simply receive the permutation commitment from the verifier
+    let permuted_shares = receive_share_values(prepared_permutation_shares, channel)
+        .map_err(|e| anyhow!("Failed to receive shared permutation using BeDOZa: {}", e))?;
+
+    // Now need to verify that this is a valid permutation too
+    // Sample and send a challenge r value
+    let challenge = random_fe_vec(1)?.pop().unwrap();
+    send_fe(challenge, channel)
+        .map_err(|e| anyhow!("Failed to send permutation challenge: {}", e))?;
+    // Locally compute (pi(1) - r), (pi(2) - r), ..., (pi(n) - r) shares
+    let permutation_minus_challenge_share: Vec<BeDOZa> = permuted_shares.iter()
+        .map(|share| *share - challenge)
+        .collect();
+    // Multiply them all together to get share for (pi(1) - r) * (pi(2) - r) * ... * (pi(n) - r)
+    let permutation_minus_challenge_prod = take_vec_prod(
+        &permutation_minus_challenge_share,
+        prepared_permutation_triple_shares,
+        channel,
+    ).map_err(|e| anyhow!("Failed to compute product share for permutation verification: {}", e))?;
+
+    // Receive the opened product share from the verifier
+    let opened_product = open_values_receive(&[permutation_minus_challenge_prod], channel)
+        .map_err(|e| anyhow!("Failed to receive opened permutation product share: {}", e))?[0];
+    // The expected value of this product is (1 - r) * (2 - r) * ... * (n - r). We can locally compute this and compare
+    let expected_product = (1..=permutation_minus_challenge_share.len() as u64)
+        .map(|i| FE::from(i) - challenge)
+        .fold(FE::one(), |acc, val| acc * val);
+    ensure!(opened_product == expected_product, "Permutation verification failed: expected product {:?}, got {:?}", expected_product, opened_product);
+
+    Ok(permuted_shares)
 }
 
 pub fn shuffle_prover_step2(
     u: &[BeDOZa],
-    permutation: &[usize],
+    prepared_s_share: &BeDOZa,
     channel: &mut TcpChannel
 ) -> Result<Vec<BeDOZa>> {
     // In order to be really concrete about the number of exponentiations, I need to implement this function in a big chunk
@@ -116,6 +146,11 @@ pub fn shuffle_prover_step2(
     // -------------------------------
     // Next we move on to shuffling and raising these values to the same (masking power)
     // We also need to prove this thing is done correctly.
+
+    // First receive the secret shared mask s from the verifier
+    let s_share = receive_share_values(&[*prepared_s_share], channel)
+        .map_err(|e| anyhow!("Failed to receive shared mask s from verifier: {}", e))?[0];
+
 
     unimplemented!()
 }
