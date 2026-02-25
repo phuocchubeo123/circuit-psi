@@ -1,8 +1,5 @@
 use circuit_psi::bedoza::{
-    BeDOZa,
-    bedoza_receiver::BeDOZaReceiver,
-    bedoza_sender::BeDOZaSender,
-    defines::FE,
+    BeDOZa, bedoza_receiver::BeDOZaReceiver, bedoza_sender::BeDOZaSender, defines::FE,
 };
 use swanky_serialization::CanonicalSerialize;
 
@@ -37,7 +34,8 @@ fn reconstruct_value(left: &BeDOZa, right: &BeDOZa) -> FE {
 }
 
 fn assert_tag_checks(share: &BeDOZa) {
-    let expected_tag = share.bedoza_receiver().key() * share.bedoza_sender().val() + share.bedoza_sender().pad();
+    let expected_tag =
+        share.bedoza_receiver().key() * share.bedoza_sender().val() + share.bedoza_sender().pad();
     assert_eq!(share.bedoza_receiver().tag(), expected_tag);
 }
 
@@ -49,7 +47,8 @@ fn bedoza_add_preserves_value_and_tags() {
     let y_secret = fe(23);
 
     let (x_left, x_right) = make_secret_shares(x_secret, fe(5), fe(3), fe(7), key_left, key_right);
-    let (y_left, y_right) = make_secret_shares(y_secret, fe(11), fe(13), fe(19), key_left, key_right);
+    let (y_left, y_right) =
+        make_secret_shares(y_secret, fe(11), fe(13), fe(19), key_left, key_right);
 
     let z_left = &x_left + &y_left;
     let z_right = &x_right + &y_right;
@@ -66,7 +65,8 @@ fn bedoza_sub_preserves_value_and_tags() {
     let x_secret = fe(31);
     let y_secret = fe(7);
 
-    let (x_left, x_right) = make_secret_shares(x_secret, fe(4), fe(21), fe(12), key_left, key_right);
+    let (x_left, x_right) =
+        make_secret_shares(x_secret, fe(4), fe(21), fe(12), key_left, key_right);
     let (y_left, y_right) = make_secret_shares(y_secret, fe(2), fe(8), fe(16), key_left, key_right);
 
     let z_left = &x_left - &y_left;
@@ -84,7 +84,8 @@ fn bedoza_mul_constant_preserves_value_and_tags() {
     let x_secret = fe(27);
     let constant = fe(6);
 
-    let (x_left, x_right) = make_secret_shares(x_secret, fe(9), fe(10), fe(22), key_left, key_right);
+    let (x_left, x_right) =
+        make_secret_shares(x_secret, fe(9), fe(10), fe(22), key_left, key_right);
 
     let z_left = &x_left * constant;
     let z_right = &x_right * constant;
@@ -101,7 +102,8 @@ fn bedoza_add_constant_preserves_value_and_tags() {
     let x_secret = fe(19);
     let constant = fe(11);
 
-    let (x_left, x_right) = make_secret_shares(x_secret, fe(6), fe(15), fe(24), key_left, key_right);
+    let (x_left, x_right) =
+        make_secret_shares(x_secret, fe(6), fe(15), fe(24), key_left, key_right);
 
     let z_left = &x_left + constant;
     let z_right = &x_right + constant;
@@ -118,7 +120,8 @@ fn bedoza_sub_constant_preserves_value_and_tags() {
     let x_secret = fe(55);
     let constant = fe(13);
 
-    let (x_left, x_right) = make_secret_shares(x_secret, fe(21), fe(9), fe(28), key_left, key_right);
+    let (x_left, x_right) =
+        make_secret_shares(x_secret, fe(21), fe(9), fe(28), key_left, key_right);
 
     let z_left = &x_left - constant;
     let z_right = &x_right - constant;
@@ -135,7 +138,8 @@ fn bedoza_mul_fe_owned_preserves_value_and_tags() {
     let x_secret = fe(44);
     let constant = fe(3);
 
-    let (x_left, x_right) = make_secret_shares(x_secret, fe(12), fe(5), fe(17), key_left, key_right);
+    let (x_left, x_right) =
+        make_secret_shares(x_secret, fe(12), fe(5), fe(17), key_left, key_right);
 
     let z_left = x_left * constant;
     let z_right = x_right * constant;

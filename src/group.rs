@@ -3,11 +3,11 @@ use crate::{
     stark_scalar::{StarkPoint, StarkScalar},
     tcp_channel::TcpChannel,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use lambdaworks_math::cyclic_group::IsGroup;
 use lambdaworks_math::elliptic_curve::{
-    short_weierstrass::point::{Endianness, PointFormat},
     short_weierstrass::curves::stark_curve::StarkCurve,
+    short_weierstrass::point::{Endianness, PointFormat},
     traits::IsEllipticCurve,
 };
 use lambdaworks_math::msm::pippenger;
@@ -49,7 +49,10 @@ impl Group {
 
 pub fn msm_pippenger(points: &[Group], scalars: &[FE]) -> Result<Group> {
     let point_vec: Vec<CurvePoint> = points.iter().map(|g| g.point.clone()).collect();
-    let scalar_vec = scalars.iter().map(|s| s.representative()).collect::<Vec<_>>();
+    let scalar_vec = scalars
+        .iter()
+        .map(|s| s.representative())
+        .collect::<Vec<_>>();
     let out_point = pippenger::msm::<4, CurvePoint>(&scalar_vec, &point_vec)
         .map_err(|e| anyhow!("Failed to compute Pippenger MSM: {}", e))?;
     Ok(Group::from_point(out_point))
@@ -130,14 +133,13 @@ impl Neg for Group {
     }
 }
 
-pub fn send_group_elements(
-    elements: &[Group],
-    channel: &mut TcpChannel,
-) -> Result<()> {
+pub fn send_group_elements(elements: &[Group], channel: &mut TcpChannel) -> Result<()> {
     let mut buf = Vec::with_capacity(elements.len() * GROUP_POINT_BYTES);
     buf.extend(elements.len().to_le_bytes());
     for elem in elements {
-        let encoded = elem.as_point().serialize(PointFormat::Projective, Endianness::LittleEndian);
+        let encoded = elem
+            .as_point()
+            .serialize(PointFormat::Projective, Endianness::LittleEndian);
         if encoded.len() != GROUP_POINT_BYTES {
             return Err(anyhow!(
                 "Unexpected encoded group point size: expected {} bytes, got {} bytes",
@@ -151,9 +153,7 @@ pub fn send_group_elements(
     Ok(())
 }
 
-pub fn receive_group_elements(
-    channel: &mut TcpChannel,
-) -> Result<Vec<Group>> {
+pub fn receive_group_elements(channel: &mut TcpChannel) -> Result<Vec<Group>> {
     let buf = channel.receive()?;
     if buf.len() < 8 {
         return Err(anyhow!(

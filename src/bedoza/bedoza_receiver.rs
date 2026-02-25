@@ -1,13 +1,10 @@
 use crate::{
+    bedoza::{comm_util::receive_fe_vec, defines::FE},
     tcp_channel::TcpChannel,
-    bedoza::{
-        comm_util::receive_fe_vec,
-        defines::FE,
-    },
 };
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{Result, anyhow, ensure};
 
-use std::ops::{Add, Sub, Mul};
+use std::ops::{Add, Mul, Sub};
 
 // We assume that the offline phase is already done
 // https://eprint.iacr.org/2010/514.pdf
@@ -41,10 +38,11 @@ pub fn receive_share_values_receiver(
     prepared_bedoza_receivers: &[BeDOZaReceiver],
     channel: &mut TcpChannel,
 ) -> Result<Vec<BeDOZaReceiver>> {
-    let masked_vals = receive_fe_vec(channel)
-        .map_err(|e| anyhow!("Failed to receive FE vec: {}", e))?;
+    let masked_vals =
+        receive_fe_vec(channel).map_err(|e| anyhow!("Failed to receive FE vec: {}", e))?;
 
-    let bedoza_shared_receivers = prepared_bedoza_receivers.iter()
+    let bedoza_shared_receivers = prepared_bedoza_receivers
+        .iter()
         .zip(masked_vals.iter())
         .map(|(x, y)| x + *y)
         .collect();
@@ -53,28 +51,47 @@ pub fn receive_share_values_receiver(
 }
 
 /// Receive the shares from BeDOZaSender
-pub fn receive_open_shares(bedoza_receivers: &[BeDOZaReceiver], channel: &mut TcpChannel) -> Result<Vec<FE>> {
+pub fn receive_open_shares(
+    bedoza_receivers: &[BeDOZaReceiver],
+    channel: &mut TcpChannel,
+) -> Result<Vec<FE>> {
     // First check whether keys of every BeDOZaReceiver are the same (since they come from the same person)
     let key = bedoza_receivers[0].key();
     for (i, bedoza_receiver) in bedoza_receivers.iter().enumerate() {
-        ensure!(bedoza_receiver.key() == key, 
-            "Key mismatch at bedoza_receiver index {}", i);
+        ensure!(
+            bedoza_receiver.key() == key,
+            "Key mismatch at bedoza_receiver index {}",
+            i
+        );
     }
 
     // Receive values and pads from BeDOZaSender
-    let values = receive_fe_vec(channel)
-        .map_err(|e| anyhow!("Failed to receive values: {}", e))?;
-    let pads = receive_fe_vec(channel)
-        .map_err(|e| anyhow!("Failed to receive pads: {}", e))?;
+    let values = receive_fe_vec(channel).map_err(|e| anyhow!("Failed to receive values: {}", e))?;
+    let pads = receive_fe_vec(channel).map_err(|e| anyhow!("Failed to receive pads: {}", e))?;
 
-    ensure!(values.len() == pads.len(), 
-        "Length mismatch between values and pads received: lhs = {}, rhs = {}", values.len(), pads.len());
+    ensure!(
+        values.len() == pads.len(),
+        "Length mismatch between values and pads received: lhs = {}, rhs = {}",
+        values.len(),
+        pads.len()
+    );
 
     // Compute the received tags and compare them with the tags that I have
-    let received_tags: Vec<FE> = values.iter().zip(pads.iter()).map(|(value, pad)| key * value + pad).collect();
-    for (i, (&received_tag, bedoza_receiver)) in received_tags.iter().zip(bedoza_receivers.iter()).enumerate() {
-        ensure!(received_tag == bedoza_receiver.tag(),
-            "Tag mismatch at bedoza_receiver index {}", i);
+    let received_tags: Vec<FE> = values
+        .iter()
+        .zip(pads.iter())
+        .map(|(value, pad)| key * value + pad)
+        .collect();
+    for (i, (&received_tag, bedoza_receiver)) in received_tags
+        .iter()
+        .zip(bedoza_receivers.iter())
+        .enumerate()
+    {
+        ensure!(
+            received_tag == bedoza_receiver.tag(),
+            "Tag mismatch at bedoza_receiver index {}",
+            i
+        );
     }
 
     Ok(values)
@@ -83,8 +100,20 @@ pub fn receive_open_shares(bedoza_receivers: &[BeDOZaReceiver], channel: &mut Tc
 impl Add<&BeDOZaReceiver> for &BeDOZaReceiver {
     type Output = BeDOZaReceiver;
     fn add(self, rhs: &BeDOZaReceiver) -> BeDOZaReceiver {
-        assert_eq!(self.key(), rhs.key(), "Key mismatch in BeDOZa addition: lhs = {:?}, rhs = {:?}", self.key(), rhs.key());
-        assert_eq!(self.side(), rhs.side(), "Side mismatch in BeDOZa addition: lhs = {:?}, rhs = {:?}", self.side(), rhs.side());
+        assert_eq!(
+            self.key(),
+            rhs.key(),
+            "Key mismatch in BeDOZa addition: lhs = {:?}, rhs = {:?}",
+            self.key(),
+            rhs.key()
+        );
+        assert_eq!(
+            self.side(),
+            rhs.side(),
+            "Side mismatch in BeDOZa addition: lhs = {:?}, rhs = {:?}",
+            self.side(),
+            rhs.side()
+        );
         BeDOZaReceiver {
             tag: self.tag() + rhs.tag(),
             key: self.key(),
@@ -104,13 +133,15 @@ impl Add<FE> for &BeDOZaReceiver {
     type Output = BeDOZaReceiver;
 
     fn add(self, constant: FE) -> BeDOZaReceiver {
-        if self.side() { // If side = true, don't do anything to the share
+        if self.side() {
+            // If side = true, don't do anything to the share
             BeDOZaReceiver {
                 tag: self.tag(),
                 key: self.key(),
                 side: self.side(),
             }
-        } else { // If side = false, add the constant to the share
+        } else {
+            // If side = false, add the constant to the share
             BeDOZaReceiver {
                 tag: self.tag() + self.key() * constant,
                 key: self.key(),
@@ -132,13 +163,15 @@ impl Sub<FE> for &BeDOZaReceiver {
     type Output = BeDOZaReceiver;
 
     fn sub(self, constant: FE) -> BeDOZaReceiver {
-        if self.side() { // If side = true, don't do anything to the share
+        if self.side() {
+            // If side = true, don't do anything to the share
             BeDOZaReceiver {
                 tag: self.tag(),
                 key: self.key(),
                 side: self.side(),
             }
-        } else { // If side = false, subtract the constant from the share
+        } else {
+            // If side = false, subtract the constant from the share
             BeDOZaReceiver {
                 tag: self.tag() - self.key() * constant,
                 key: self.key(),
@@ -159,8 +192,20 @@ impl Sub<FE> for BeDOZaReceiver {
 impl Sub<&BeDOZaReceiver> for &BeDOZaReceiver {
     type Output = BeDOZaReceiver;
     fn sub(self, rhs: &BeDOZaReceiver) -> BeDOZaReceiver {
-        assert_eq!(self.key(), rhs.key(), "Key mismatch in BeDOZa subtraction: lhs = {:?}, rhs = {:?}", self.key(), rhs.key());
-        assert_eq!(self.side(), rhs.side(), "Side mismatch in BeDOZa subtraction: lhs = {:?}, rhs = {:?}", self.side(), rhs.side());
+        assert_eq!(
+            self.key(),
+            rhs.key(),
+            "Key mismatch in BeDOZa subtraction: lhs = {:?}, rhs = {:?}",
+            self.key(),
+            rhs.key()
+        );
+        assert_eq!(
+            self.side(),
+            rhs.side(),
+            "Side mismatch in BeDOZa subtraction: lhs = {:?}, rhs = {:?}",
+            self.side(),
+            rhs.side()
+        );
         BeDOZaReceiver {
             tag: self.tag() - rhs.tag(),
             key: self.key(),

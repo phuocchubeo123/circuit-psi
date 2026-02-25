@@ -26,14 +26,7 @@ fn free_local_addr() -> String {
         .to_string()
 }
 
-fn make_cross_party_share(
-    v0: FE,
-    p0: FE,
-    v1: FE,
-    p1: FE,
-    key0: FE,
-    key1: FE,
-) -> (BeDOZa, BeDOZa) {
+fn make_cross_party_share(v0: FE, p0: FE, v1: FE, p1: FE, key0: FE, key1: FE) -> (BeDOZa, BeDOZa) {
     // Party 0 keeps side-0 sender and side-1 receiver (authenticates party 1 sender).
     let party0 = BeDOZa::new(
         BeDOZaSender::new(v0, p0, false),
@@ -142,7 +135,10 @@ fn send_openings_for_peer(
             x_share - a_share
         })
         .collect();
-    let d_senders: Vec<BeDOZaSender> = d_shares.iter().map(|share| *share.bedoza_sender()).collect();
+    let d_senders: Vec<BeDOZaSender> = d_shares
+        .iter()
+        .map(|share| *share.bedoza_sender())
+        .collect();
     send_open_shares(&d_senders, channel)?;
 
     let e_shares: Vec<BeDOZa> = y_shares
@@ -153,7 +149,10 @@ fn send_openings_for_peer(
             y_share - b_share
         })
         .collect();
-    let e_senders: Vec<BeDOZaSender> = e_shares.iter().map(|share| *share.bedoza_sender()).collect();
+    let e_senders: Vec<BeDOZaSender> = e_shares
+        .iter()
+        .map(|share| *share.bedoza_sender())
+        .collect();
     send_open_shares(&e_senders, channel)?;
 
     Ok(())
@@ -182,7 +181,8 @@ fn run_batch_with_peer_sender(
 }
 
 fn assert_cross_authenticated(local: &BeDOZa, remote: &BeDOZa) {
-    let expected = local.bedoza_receiver().key() * remote.bedoza_sender().val() + remote.bedoza_sender().pad();
+    let expected =
+        local.bedoza_receiver().key() * remote.bedoza_sender().val() + remote.bedoza_sender().pad();
     assert_eq!(local.bedoza_receiver().tag(), expected);
 }
 
@@ -191,26 +191,13 @@ fn batch_multiply_localhost_roundtrip() -> Result<()> {
     let key0 = fe(97);
     let key1 = fe(113);
 
-    let (p0_x_a, p0_y_a, p0_t_a, p1_x_a, p1_y_a, p1_t_a, expected_products) = build_inputs(key0, key1);
-    let z0 = run_batch_with_peer_sender(
-        p0_x_a,
-        p0_y_a,
-        p0_t_a,
-        p1_x_a,
-        p1_y_a,
-        p1_t_a,
-    )?;
+    let (p0_x_a, p0_y_a, p0_t_a, p1_x_a, p1_y_a, p1_t_a, expected_products) =
+        build_inputs(key0, key1);
+    let z0 = run_batch_with_peer_sender(p0_x_a, p0_y_a, p0_t_a, p1_x_a, p1_y_a, p1_t_a)?;
 
     // Rebuild the same deterministic inputs to run the opposite direction.
     let (p0_x_b, p0_y_b, p0_t_b, p1_x_b, p1_y_b, p1_t_b, _) = build_inputs(key0, key1);
-    let z1 = run_batch_with_peer_sender(
-        p1_x_b,
-        p1_y_b,
-        p1_t_b,
-        p0_x_b,
-        p0_y_b,
-        p0_t_b,
-    )?;
+    let z1 = run_batch_with_peer_sender(p1_x_b, p1_y_b, p1_t_b, p0_x_b, p0_y_b, p0_t_b)?;
 
     assert_eq!(z0.len(), expected_products.len());
     assert_eq!(z1.len(), expected_products.len());

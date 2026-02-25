@@ -7,10 +7,26 @@ edition = "2024"
 curve25519-dalek = "4"
 rand_core = "0.10.0"
 rand = "0.10.0"
-anyhow = "1.0.101"
+anyhow = "1.0.102"
+eyre = "0.6.12"
+ff = { path = "/home/ubuntu/.cargo/git/checkouts/ff-4a06948a8ccc4786/c29da06", features = ["derive"] }
+generic-array = "1.3.5"
 lambdaworks-math = "0.13.0"
+num-traits = "0.2.19"
+rand08 = { package = "rand", version = "0.8.5" }
 rayon = "1.11.0"
 fourq = "0.1.6"
+crypto-bigint = { version = "0.6.1", features = ["hybrid-array"] }
+serde = { version = "1.0.228", features = ["derive"] }
+subtle = "2.6.1"
+mac-n-cheese-vole = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/50e0aba/edge/mac-n-cheese/vole" }
+keyed_arena = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/50e0aba/edge/keyed_arena" }
+swanky-aes-rng = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/50e0aba/edge/aes-rng" }
+swanky-channel-legacy = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/50e0aba/edge/channel-legacy" }
+swanky-field-binary = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/50e0aba/edge/field-binary" }
+swanky-field = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/50e0aba/edge/field" }
+swanky-party = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/50e0aba/edge/party" }
+swanky-serialization = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/50e0aba/edge/serialization" }
 
 [profile.release]
 lto = true

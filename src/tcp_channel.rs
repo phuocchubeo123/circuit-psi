@@ -1,10 +1,10 @@
+use anyhow::{Result, anyhow};
 use std::{
+    io::{Read, Write},
     net::TcpStream,
-    io::{Write, Read},
     thread::sleep,
     time::Duration,
 };
-use anyhow::{anyhow, Result};
 
 pub struct TcpChannel {
     stream: TcpStream,
@@ -15,10 +15,10 @@ pub struct TcpChannel {
 impl TcpChannel {
     /// Creates a new TcpChannel
     pub fn new(stream: TcpStream) -> Self {
-        Self { 
-            stream, 
-            bytes_sent: 0, 
-            bytes_received: 0 
+        Self {
+            stream,
+            bytes_sent: 0,
+            bytes_received: 0,
         }
     }
 

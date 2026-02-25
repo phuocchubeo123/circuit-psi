@@ -1,7 +1,7 @@
 use lambdaworks_math::{
     cyclic_group::IsGroup,
-    errors::ByteConversionError,
     elliptic_curve::{short_weierstrass::curves::stark_curve::StarkCurve, traits::IsEllipticCurve},
+    errors::ByteConversionError,
     errors::CreationError,
     field::{
         element::FieldElement,

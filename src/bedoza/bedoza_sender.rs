@@ -1,11 +1,8 @@
 use crate::{
-    bedoza::{
-        comm_util::send_fe_vec,
-        defines::FE,
-    },
+    bedoza::{comm_util::send_fe_vec, defines::FE},
     tcp_channel::TcpChannel,
 };
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{Result, anyhow, ensure};
 use std::ops::{Add, Mul, Sub};
 
 #[derive(Copy, Clone)]
@@ -46,7 +43,8 @@ pub fn share_values_sender(
     );
 
     // Mask the values with prepared randomness
-    let masked_vals: Vec<FE> = vals.iter()
+    let masked_vals: Vec<FE> = vals
+        .iter()
         .zip(prepared_bedoza_senders.iter())
         .map(|(x, r)| x - r.val())
         .collect();
@@ -54,7 +52,8 @@ pub fn share_values_sender(
     // Send these masked values to the receiver
     send_fe_vec(&masked_vals, channel).map_err(|e| anyhow!("Failed to send fe values: {}", e))?;
 
-    let bedoza_shared_senders: Vec<BeDOZaSender> = prepared_bedoza_senders.iter()
+    let bedoza_shared_senders: Vec<BeDOZaSender> = prepared_bedoza_senders
+        .iter()
         .zip(masked_vals.iter())
         .map(|(x, y)| x + *y)
         .collect();
