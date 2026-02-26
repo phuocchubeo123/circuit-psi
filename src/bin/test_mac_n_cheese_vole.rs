@@ -1,18 +1,13 @@
 use circuit_psi::scalar_field::{FourQScalarField, fq};
+use circuit_psi::tcp_channel::swanky_channel_from_tcp_stream;
+use circuit_psi::vole_buffer::{BufferedVoleReceiver, BufferedVoleSender};
 use eyre::WrapErr;
-use keyed_arena::KeyedArena;
-use mac_n_cheese_vole::{
-    mac::Mac,
-    specialization::NoSpecialization,
-    vole::{VoleReceiver, VoleSender, VoleSizes},
-};
+use mac_n_cheese_vole::{mac::Mac, specialization::NoSpecialization, vole::VoleSizes};
 use std::{
-    io::{BufReader, BufWriter},
     net::{TcpListener, TcpStream},
     thread,
 };
 use swanky_aes_rng::AesRng;
-use swanky_channel_legacy::{AbstractChannel, Channel};
 use swanky_party::{IS_PROVER, IS_VERIFIER, Prover, Verifier};
 
 type ExampleMac = (FourQScalarField, FourQScalarField, NoSpecialization);
@@ -32,6 +27,10 @@ fn make_base_voles(
     (sender, receiver)
 }
 
+fn make_inputs(n: usize) -> Vec<FourQScalarField> {
+    (0..n).map(|i| fq((i as u64) + 1000)).collect()
+}
+
 fn connect_with_retry(addr: std::net::SocketAddr) -> eyre::Result<TcpStream> {
     for _ in 0..200 {
         if let Ok(stream) = TcpStream::connect(addr) {
@@ -42,147 +41,69 @@ fn connect_with_retry(addr: std::net::SocketAddr) -> eyre::Result<TcpStream> {
     eyre::bail!("failed to connect to {addr}");
 }
 
-fn send_buffer(channel: &mut impl AbstractChannel, buf: &[u8]) -> eyre::Result<()> {
-    channel.write_bytes(buf)?;
-    channel.flush()?;
-    Ok(())
-}
-
-fn recv_buffer(channel: &mut impl AbstractChannel, buf: &mut [u8]) -> eyre::Result<()> {
-    channel.read_bytes(buf)?;
-    Ok(())
-}
-
 fn sender_party(
     listener: TcpListener,
     base_sender: Vec<Mac<Prover, ExampleMac>>,
-) -> eyre::Result<Vec<Mac<Prover, ExampleMac>>> {
-    let sizes = VoleSizes::of::<FourQScalarField, FourQScalarField>();
+    inputs: Vec<FourQScalarField>,
+) -> eyre::Result<(Vec<Mac<Prover, ExampleMac>>, u64, u64, usize)> {
     let (socket, _) = listener.accept().wrap_err("sender accept")?;
-    let mut channel = Channel::new(
-        BufReader::new(socket.try_clone().wrap_err("clone sender socket")?),
-        BufWriter::new(socket),
-    );
+    let mut channel = swanky_channel_from_tcp_stream(socket).map_err(|e| eyre::eyre!("{}", e))?;
 
     let mut rng = AesRng::new();
-    let sender = VoleSender::<ExampleMac>::init(&mut channel, &mut rng)?;
-    channel.flush()?;
+    let mut vole = BufferedVoleSender::<ExampleMac>::init(&mut channel, &mut rng, base_sender)?;
+    let _added = vole.extend_random(&mut channel, &mut rng, inputs.len())?;
+    let sender_output = vole.materialize_inputs(&mut channel, &inputs)?;
 
-    let arena = KeyedArena::with_capacity(0, 0);
-    let selector = 1;
-    let mut comms_1 = vec![0u8; sizes.comms_1s];
-    let mut comms_2 = vec![0u8; sizes.comms_2r];
-    let mut comms_3 = vec![0u8; sizes.comms_3s];
-    let mut comms_4 = vec![0u8; sizes.comms_4r];
-    let mut comms_5 = vec![0u8; sizes.comms_5s];
-
-    let sender_stage2 = sender.send(
-        &arena,
-        selector,
-        &mut AesRng::new(),
-        &base_sender,
-        &mut comms_1,
-    )?;
-    send_buffer(&mut channel, &comms_1)?;
-
-    recv_buffer(&mut channel, &mut comms_2)?;
-    let mut sender_output = vec![Mac::zero(); sizes.voles_outputted];
-    let sender_stage3 = sender_stage2.stage2(
-        &sender,
-        &arena,
-        &base_sender,
-        &mut sender_output,
-        &comms_2,
-        &mut comms_3,
-    )?;
-    send_buffer(&mut channel, &comms_3)?;
-
-    recv_buffer(&mut channel, &mut comms_4)?;
-    sender_stage3.stage3(
-        &sender,
-        &arena,
-        &base_sender,
-        &mut sender_output,
-        &comms_4,
-        &mut comms_5,
-    )?;
-    send_buffer(&mut channel, &comms_5)?;
-
-    Ok(sender_output)
+    Ok((
+        sender_output,
+        channel.bytes_sent(),
+        channel.bytes_received(),
+        vole.random_available(),
+    ))
 }
 
 fn receiver_party(
     addr: std::net::SocketAddr,
     delta: FourQScalarField,
     base_receiver: Vec<Mac<Verifier, ExampleMac>>,
-) -> eyre::Result<Vec<Mac<Verifier, ExampleMac>>> {
-    let sizes = VoleSizes::of::<FourQScalarField, FourQScalarField>();
+    output_len: usize,
+) -> eyre::Result<(Vec<Mac<Verifier, ExampleMac>>, u64, u64, usize)> {
     let socket = connect_with_retry(addr)?;
-    let mut channel = Channel::new(
-        BufReader::new(socket.try_clone().wrap_err("clone receiver socket")?),
-        BufWriter::new(socket),
-    );
+    let mut channel = swanky_channel_from_tcp_stream(socket).map_err(|e| eyre::eyre!("{}", e))?;
 
     let mut rng = AesRng::new();
-    let receiver = VoleReceiver::<ExampleMac>::init(&mut channel, &mut rng, delta)?;
-    channel.flush()?;
+    let mut vole =
+        BufferedVoleReceiver::<ExampleMac>::init(&mut channel, &mut rng, delta, base_receiver)?;
+    let _added = vole.extend_random(&mut channel, &mut rng, output_len)?;
+    let receiver_output = vole.materialize_next(&mut channel, output_len)?;
 
-    let arena = KeyedArena::with_capacity(0, 0);
-    let selector = 1;
-    let mut comms_1 = vec![0u8; sizes.comms_1s];
-    let mut comms_2 = vec![0u8; sizes.comms_2r];
-    let mut comms_3 = vec![0u8; sizes.comms_3s];
-    let mut comms_4 = vec![0u8; sizes.comms_4r];
-    let mut comms_5 = vec![0u8; sizes.comms_5s];
-
-    recv_buffer(&mut channel, &mut comms_1)?;
-    let mut receiver_output = vec![Mac::zero(); sizes.voles_outputted];
-    let receiver_stage2 = receiver.receive(
-        &arena,
-        selector,
-        &mut AesRng::new(),
-        &base_receiver,
-        &mut receiver_output,
-        &comms_1,
-        &mut comms_2,
-    )?;
-    send_buffer(&mut channel, &comms_2)?;
-
-    recv_buffer(&mut channel, &mut comms_3)?;
-    let receiver_stage3 = receiver_stage2.stage2(
-        &receiver,
-        &arena,
-        &base_receiver,
-        &mut receiver_output,
-        &comms_3,
-        &mut comms_4,
-    )?;
-    send_buffer(&mut channel, &comms_4)?;
-
-    recv_buffer(&mut channel, &mut comms_5)?;
-    receiver_stage3.stage3(
-        &receiver,
-        &arena,
-        &base_receiver,
-        &mut receiver_output,
-        &comms_5,
-    )?;
-
-    Ok(receiver_output)
+    Ok((
+        receiver_output,
+        channel.bytes_sent(),
+        channel.bytes_received(),
+        vole.random_available(),
+    ))
 }
 
 fn main() -> eyre::Result<()> {
+    let output_len = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(10_000);
+
     let alpha = fq(7);
     let delta = -alpha;
     let sizes = VoleSizes::of::<FourQScalarField, FourQScalarField>();
     let (base_sender, base_receiver) = make_base_voles(alpha, sizes.base_voles_needed);
+    let inputs = make_inputs(output_len);
 
     let listener = TcpListener::bind("127.0.0.1:0").wrap_err("bind localhost listener")?;
     let addr = listener.local_addr().wrap_err("read listener address")?;
 
-    let sender_handle = thread::spawn(move || sender_party(listener, base_sender));
-    let receiver_output = receiver_party(addr, delta, base_receiver)?;
-    let sender_output = sender_handle
+    let sender_handle = thread::spawn(move || sender_party(listener, base_sender, inputs));
+    let (receiver_output, receiver_sent, receiver_received, receiver_left) =
+        receiver_party(addr, delta, base_receiver, output_len)?;
+    let (sender_output, sender_sent, sender_received, sender_left) = sender_handle
         .join()
         .expect("sender thread panicked")
         .wrap_err("sender party failed")?;
@@ -194,8 +115,16 @@ fn main() -> eyre::Result<()> {
     }
 
     println!(
-        "mac-n-cheese-vole TCP check passed over FourQ subgroup-order field ({} output VOLEs)",
+        "buffered mac-n-cheese VOLE check passed over FourQ scalar field ({} output VOLEs)",
         sender_output.len()
+    );
+    println!(
+        "unused random VOLEs: sender={}, receiver={}",
+        sender_left, receiver_left
+    );
+    println!(
+        "sender bytes: sent={}, received={} | receiver bytes: sent={}, received={}",
+        sender_sent, sender_received, receiver_sent, receiver_received
     );
     Ok(())
 }

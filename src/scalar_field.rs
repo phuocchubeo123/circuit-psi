@@ -195,3 +195,86 @@ impl SwankyPrimeFiniteField for FourQScalarField {
 pub fn fq(n: u64) -> FourQScalarField {
     FourQScalarField::try_from(n as u128).expect("small constant is valid FourQ scalar field value")
 }
+
+impl FourQScalarField {
+    pub fn zero() -> Self {
+        <Self as ff::Field>::ZERO
+    }
+
+    pub fn one() -> Self {
+        <Self as ff::Field>::ONE
+    }
+
+    pub fn inv(&self) -> Result<Self, &'static str> {
+        self.invert()
+            .into_option()
+            .ok_or("cannot invert zero in FourQ scalar field")
+    }
+
+    pub fn to_bytes_le(&self) -> [u8; 32] {
+        let repr = self.to_repr();
+        let mut out = [0u8; 32];
+        out.copy_from_slice(repr.as_ref());
+        out
+    }
+
+    pub fn from_bytes_le(bytes: &[u8; 32]) -> Result<Self, BiggerThanModulus> {
+        let mut repr = <Self as ff::PrimeField>::Repr::default();
+        repr.as_mut().copy_from_slice(bytes);
+        <Self as ff::PrimeField>::from_repr_vartime(repr).ok_or(BiggerThanModulus)
+    }
+
+    pub fn from_bytes(
+        bytes: &generic_array::GenericArray<u8, generic_array::typenum::U32>,
+    ) -> Result<Self, BiggerThanModulus> {
+        <Self as CanonicalSerialize>::from_bytes(bytes)
+    }
+}
+
+impl std::ops::Add<FourQScalarField> for &FourQScalarField {
+    type Output = FourQScalarField;
+
+    fn add(self, rhs: FourQScalarField) -> Self::Output {
+        *self + rhs
+    }
+}
+
+impl std::ops::Add<&FourQScalarField> for &FourQScalarField {
+    type Output = FourQScalarField;
+
+    fn add(self, rhs: &FourQScalarField) -> Self::Output {
+        *self + *rhs
+    }
+}
+
+impl std::ops::Sub<FourQScalarField> for &FourQScalarField {
+    type Output = FourQScalarField;
+
+    fn sub(self, rhs: FourQScalarField) -> Self::Output {
+        *self - rhs
+    }
+}
+
+impl std::ops::Sub<&FourQScalarField> for &FourQScalarField {
+    type Output = FourQScalarField;
+
+    fn sub(self, rhs: &FourQScalarField) -> Self::Output {
+        *self - *rhs
+    }
+}
+
+impl std::ops::Mul<FourQScalarField> for &FourQScalarField {
+    type Output = FourQScalarField;
+
+    fn mul(self, rhs: FourQScalarField) -> Self::Output {
+        *self * rhs
+    }
+}
+
+impl std::ops::Mul<&FourQScalarField> for &FourQScalarField {
+    type Output = FourQScalarField;
+
+    fn mul(self, rhs: &FourQScalarField) -> Self::Output {
+        *self * *rhs
+    }
+}

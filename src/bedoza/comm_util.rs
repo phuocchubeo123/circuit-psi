@@ -1,6 +1,5 @@
 use crate::{bedoza::defines::FE, tcp_channel::TcpChannel};
 use anyhow::{Result, anyhow};
-use lambdaworks_math::traits::ByteConversion;
 
 const FE_BYTES: usize = 32;
 

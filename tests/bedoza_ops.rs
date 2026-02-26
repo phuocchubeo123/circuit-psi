@@ -1,12 +1,9 @@
 use circuit_psi::bedoza::{
     BeDOZa, bedoza_receiver::BeDOZaReceiver, bedoza_sender::BeDOZaSender, defines::FE,
 };
-use swanky_serialization::CanonicalSerialize;
 
 fn fe(n: u8) -> FE {
-    let mut bytes = [0u8; 16];
-    bytes[0] = n;
-    FE::from_bytes(&bytes.into()).expect("valid FE encoding")
+    FE::from(n as u64)
 }
 
 fn make_authenticated_share(value: FE, pad: FE, key: FE, side: bool) -> BeDOZa {

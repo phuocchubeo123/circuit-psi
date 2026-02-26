@@ -1,10 +1,11 @@
 use anyhow::{Result, anyhow};
 use std::{
-    io::{Read, Write},
+    io::{BufReader, BufWriter, Read, Write},
     net::TcpStream,
     thread::sleep,
     time::Duration,
 };
+use swanky_channel_legacy::{AbstractChannel, Channel as SwankyChannel};
 
 pub struct TcpChannel {
     stream: TcpStream,
@@ -100,4 +101,94 @@ pub fn listen_to(addr: &str) -> Result<TcpChannel> {
     let listener = std::net::TcpListener::bind(addr)?;
     let (stream, _) = listener.accept()?;
     Ok(TcpChannel::new(stream))
+}
+
+pub struct CountingSwankyChannel<C> {
+    inner: C,
+    bytes_sent: u64,
+    bytes_received: u64,
+}
+
+impl<C> CountingSwankyChannel<C> {
+    pub fn new(inner: C) -> Self {
+        Self {
+            inner,
+            bytes_sent: 0,
+            bytes_received: 0,
+        }
+    }
+
+    pub fn bytes_sent(&self) -> u64 {
+        self.bytes_sent
+    }
+
+    pub fn bytes_received(&self) -> u64 {
+        self.bytes_received
+    }
+
+    pub fn clear_counts(&mut self) {
+        self.bytes_sent = 0;
+        self.bytes_received = 0;
+    }
+
+    pub fn inner(&self) -> &C {
+        &self.inner
+    }
+
+    pub fn inner_mut(&mut self) -> &mut C {
+        &mut self.inner
+    }
+
+    pub fn into_inner(self) -> C {
+        self.inner
+    }
+}
+
+impl<C: AbstractChannel> AbstractChannel for CountingSwankyChannel<C> {
+    fn read_bytes(&mut self, bytes: &mut [u8]) -> std::io::Result<()> {
+        self.inner.read_bytes(bytes)?;
+        self.bytes_received += bytes.len() as u64;
+        Ok(())
+    }
+
+    fn write_bytes(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        self.inner.write_bytes(bytes)?;
+        self.bytes_sent += bytes.len() as u64;
+        Ok(())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+pub type SwankyTcpChannel =
+    CountingSwankyChannel<SwankyChannel<BufReader<TcpStream>, BufWriter<TcpStream>>>;
+
+pub fn swanky_channel_from_tcp_stream(stream: TcpStream) -> Result<SwankyTcpChannel> {
+    let reader = BufReader::new(stream.try_clone()?);
+    let writer = BufWriter::new(stream);
+    Ok(CountingSwankyChannel::new(SwankyChannel::new(
+        reader, writer,
+    )))
+}
+
+pub fn connect_swanky_with_retry(addr: &str) -> Result<SwankyTcpChannel> {
+    loop {
+        match TcpStream::connect(addr) {
+            Ok(stream) => {
+                return swanky_channel_from_tcp_stream(stream);
+            }
+            Err(e) => {
+                eprintln!("Connection failed: {}. Retrying...", e);
+                sleep(Duration::from_millis(50));
+            }
+        }
+    }
+}
+
+pub fn listen_swanky(addr: &str) -> Result<SwankyTcpChannel> {
+    let listener = std::net::TcpListener::bind(addr)?;
+    let (stream, _) = listener.accept()?;
+    swanky_channel_from_tcp_stream(stream)
 }

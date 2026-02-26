@@ -1,14 +1,26 @@
-use crate::stark_scalar::{StarkScalar, random_scalars, random_scalars_from_rng};
-use anyhow::{Result, anyhow};
+use crate::scalar_field::FourQScalarField;
+use anyhow::Result;
 use rand::Rng;
+use rand::RngExt;
 
-pub type FE = StarkScalar;
+pub type FE = FourQScalarField;
 
 pub fn random_fe_vec(cnt: usize) -> Result<Vec<FE>> {
-    random_scalars(cnt).map_err(|e| anyhow!("Failed to deserialize random scalar bytes: {:?}", e))
+    let mut rng = rand::rng();
+    random_fe_vec_from_rng(&mut rng, cnt)
 }
 
 pub fn random_fe_vec_from_rng(rng: &mut impl Rng, cnt: usize) -> Result<Vec<FE>> {
-    random_scalars_from_rng(rng, cnt)
-        .map_err(|e| anyhow!("Failed to deserialize random scalar bytes: {:?}", e))
+    let mut out = Vec::with_capacity(cnt);
+    for _ in 0..cnt {
+        let fe = loop {
+            let mut bytes = [0u8; 32];
+            rng.fill(&mut bytes);
+            if let Ok(fe) = FE::from_bytes_le(&bytes) {
+                break fe;
+            }
+        };
+        out.push(fe);
+    }
+    Ok(out)
 }
