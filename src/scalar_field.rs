@@ -17,6 +17,28 @@ pub const FOURQ_ORDER_WORDS_LE: [u64; 4] = [
     0x0029_CBC1_4E5E_0A72,
 ];
 
+fn ge_words(a: &[u64; 4], b: &[u64; 4]) -> bool {
+    for i in (0..4).rev() {
+        if a[i] > b[i] {
+            return true;
+        }
+        if a[i] < b[i] {
+            return false;
+        }
+    }
+    true
+}
+
+fn sub_words(a: &mut [u64; 4], b: &[u64; 4]) {
+    let mut borrow = 0u64;
+    for i in 0..4 {
+        let (tmp, b1) = a[i].overflowing_sub(b[i]);
+        let (tmp2, b2) = tmp.overflowing_sub(borrow);
+        a[i] = tmp2;
+        borrow = (b1 as u64) | (b2 as u64);
+    }
+}
+
 impl Hash for FourQScalarField {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.to_repr().as_ref().hash(state);
@@ -222,6 +244,30 @@ impl FourQScalarField {
         let mut repr = <Self as ff::PrimeField>::Repr::default();
         repr.as_mut().copy_from_slice(bytes);
         <Self as ff::PrimeField>::from_repr_vartime(repr).ok_or(BiggerThanModulus)
+    }
+
+    // Biased mapping: interpret bytes as a 256-bit integer and reduce modulo
+    // the FourQ subgroup order.
+    pub fn from_bytes_le_mod_order(bytes: &[u8; 32]) -> Self {
+        let mut limbs = [0u64; 4];
+        for (i, limb) in limbs.iter_mut().enumerate() {
+            let start = i * 8;
+            let mut tmp = [0u8; 8];
+            tmp.copy_from_slice(&bytes[start..start + 8]);
+            *limb = u64::from_le_bytes(tmp);
+        }
+
+        // Keep only 246 bits and then conditionally subtract the modulus once.
+        limbs[3] &= 0x003F_FFFF_FFFF_FFFF;
+        if ge_words(&limbs, &FOURQ_ORDER_WORDS_LE) {
+            sub_words(&mut limbs, &FOURQ_ORDER_WORDS_LE);
+        }
+
+        let mut reduced = [0u8; 32];
+        for (i, limb) in limbs.iter().enumerate() {
+            reduced[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
+        }
+        Self::from_bytes_le(&reduced).expect("mod-reduced bytes must be in FourQ scalar field")
     }
 
     pub fn from_bytes(

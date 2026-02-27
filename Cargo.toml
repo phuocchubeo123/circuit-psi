@@ -27,6 +27,8 @@ swanky-field-binary = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cb
 swanky-field = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/50e0aba/edge/field" }
 swanky-party = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/50e0aba/edge/party" }
 swanky-serialization = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/50e0aba/edge/serialization" }
+psi-vole = { path = "vole" }
+p256 = "0.13.2"
 
 [profile.release]
 lto = true

@@ -1,15 +1,24 @@
-use eyre::{Context, Result, ensure};
-use generic_array::typenum::Unsigned;
-use keyed_arena::KeyedArena;
-use mac_n_cheese_vole::{
-    mac::{Mac, MacTypes},
-    vole::{VoleReceiver, VoleSender, VoleSizes},
+use crate::scalar_field::FourQScalarField as FE;
+use eyre::{Result, ensure};
+use mac_n_cheese_vole::mac::{Mac, MacTypes};
+use p256::EncodedPoint;
+use psi_vole::{
+    comm_channel::CommunicationChannel,
+    fourq_field::FourQScalarField as PsiFE,
+    vole_triple::{LPN17, VoleTriple},
 };
 use rand08::{CryptoRng, Rng};
-use std::{collections::VecDeque, ops::Sub};
+use std::{collections::VecDeque, io, marker::PhantomData};
 use swanky_channel_legacy::AbstractChannel;
 use swanky_party::{IS_PROVER, IS_VERIFIER, Prover, Verifier};
-use swanky_serialization::CanonicalSerialize;
+
+fn to_psi(x: FE) -> PsiFE {
+    PsiFE::from_bytes_le(&x.to_bytes_le()).expect("valid FourQ bytes")
+}
+
+fn to_local(x: PsiFE) -> FE {
+    FE::from_bytes_le(&x.to_bytes_le()).expect("valid FourQ bytes")
+}
 
 fn exchange_u64(channel: &mut impl AbstractChannel, value: u64) -> Result<u64> {
     channel.write_bytes(&value.to_le_bytes())?;
@@ -19,43 +28,181 @@ fn exchange_u64(channel: &mut impl AbstractChannel, value: u64) -> Result<u64> {
     Ok(u64::from_le_bytes(peer))
 }
 
-fn ceil_div(n: usize, d: usize) -> usize {
-    if n == 0 { 0 } else { 1 + (n - 1) / d }
+struct SwankyCompatChannel<'a, C: AbstractChannel> {
+    channel: &'a mut C,
 }
 
-pub struct BufferedVoleSender<T: MacTypes> {
-    sender: VoleSender<T>,
-    base_voles: Vec<Mac<Prover, T>>,
-    selector: u64,
+impl<'a, C: AbstractChannel> SwankyCompatChannel<'a, C> {
+    fn new(channel: &'a mut C) -> Self {
+        Self { channel }
+    }
+}
+
+impl<C: AbstractChannel> CommunicationChannel for SwankyCompatChannel<'_, C> {
+    fn send_u8(&mut self, data: &[u8]) -> io::Result<u64> {
+        self.channel.write_bytes(&(data.len() as u64).to_le_bytes())?;
+        self.channel.write_bytes(data)?;
+        self.channel.flush()?;
+        Ok(data.len() as u64)
+    }
+
+    fn receive_u8(&mut self) -> io::Result<Vec<u8>> {
+        let mut len_buf = [0u8; 8];
+        self.channel.read_bytes(&mut len_buf)?;
+        let len = u64::from_le_bytes(len_buf) as usize;
+        let mut out = vec![0u8; len];
+        self.channel.read_bytes(&mut out)?;
+        Ok(out)
+    }
+
+    fn send_block<const N: usize>(&mut self, data: &[[u8; N]]) -> io::Result<u64> {
+        self.channel.write_bytes(&(data.len() as u64).to_le_bytes())?;
+        if !data.is_empty() {
+            let mut packed = Vec::with_capacity(data.len() * N);
+            for block in data {
+                packed.extend_from_slice(block);
+            }
+            self.channel.write_bytes(&packed)?;
+        }
+        self.channel.flush()?;
+        Ok((data.len() * N) as u64)
+    }
+
+    fn receive_block<const N: usize>(&mut self) -> io::Result<Vec<[u8; N]>> {
+        let mut len_buf = [0u8; 8];
+        self.channel.read_bytes(&mut len_buf)?;
+        let len = u64::from_le_bytes(len_buf) as usize;
+        let mut out = vec![[0u8; N]; len];
+        for block in &mut out {
+            self.channel.read_bytes(block)?;
+        }
+        Ok(out)
+    }
+
+    fn send_bits(&mut self, bits: &[bool]) -> io::Result<u64> {
+        let mut packed = Vec::with_capacity(bits.len().div_ceil(8));
+        let mut byte = 0u8;
+        for (i, &bit) in bits.iter().enumerate() {
+            if bit {
+                byte |= 1 << (i % 8);
+            }
+            if i % 8 == 7 || i == bits.len() - 1 {
+                packed.push(byte);
+                byte = 0;
+            }
+        }
+        self.channel.write_bytes(&(bits.len() as u64).to_le_bytes())?;
+        self.channel.write_bytes(&packed)?;
+        self.channel.flush()?;
+        Ok(packed.len() as u64)
+    }
+
+    fn receive_bits(&mut self) -> io::Result<Vec<bool>> {
+        let mut len_buf = [0u8; 8];
+        self.channel.read_bytes(&mut len_buf)?;
+        let bits_len = u64::from_le_bytes(len_buf) as usize;
+        let bytes_len = bits_len.div_ceil(8);
+        let mut packed = vec![0u8; bytes_len];
+        self.channel.read_bytes(&mut packed)?;
+
+        let mut bits = Vec::with_capacity(bits_len);
+        for i in 0..bits_len {
+            bits.push((packed[i / 8] & (1 << (i % 8))) != 0);
+        }
+        Ok(bits)
+    }
+
+    fn send_stark252(&mut self, elements: &[PsiFE]) -> io::Result<u64> {
+        let total_size = (elements.len() * 32) as u64;
+        self.channel.write_bytes(&total_size.to_le_bytes())?;
+        if !elements.is_empty() {
+            let mut packed = Vec::with_capacity(elements.len() * 32);
+            for element in elements {
+                packed.extend_from_slice(&element.to_bytes_le());
+            }
+            self.channel.write_bytes(&packed)?;
+        }
+        self.channel.flush()?;
+        Ok(total_size)
+    }
+
+    fn receive_stark252(&mut self) -> io::Result<Vec<PsiFE>> {
+        let mut size_buf = [0u8; 8];
+        self.channel.read_bytes(&mut size_buf)?;
+        let total_size = u64::from_le_bytes(size_buf) as usize;
+        if total_size % 32 != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid FE byte length",
+            ));
+        }
+        let mut raw = vec![0u8; total_size];
+        self.channel.read_bytes(&mut raw)?;
+        raw.chunks_exact(32)
+            .map(|chunk| {
+                let mut bytes = [0u8; 32];
+                bytes.copy_from_slice(chunk);
+                PsiFE::from_bytes_le(&bytes).map_err(|e| {
+                    io::Error::new(io::ErrorKind::InvalidData, format!("invalid FE: {e:?}"))
+                })
+            })
+            .collect()
+    }
+
+    fn send_point(&mut self, point: &EncodedPoint) -> io::Result<u64> {
+        let bytes = point.as_bytes();
+        self.channel.write_bytes(&(bytes.len() as u64).to_le_bytes())?;
+        self.channel.write_bytes(bytes)?;
+        self.channel.flush()?;
+        Ok(bytes.len() as u64)
+    }
+
+    fn receive_point(&mut self) -> io::Result<EncodedPoint> {
+        let mut len_buf = [0u8; 8];
+        self.channel.read_bytes(&mut len_buf)?;
+        let len = u64::from_le_bytes(len_buf) as usize;
+        let mut bytes = vec![0u8; len];
+        self.channel.read_bytes(&mut bytes)?;
+        EncodedPoint::from_bytes(&bytes)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid EC point"))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.channel.flush()
+    }
+}
+
+pub struct BufferedVoleSender<T: MacTypes<VF = FE, TF = FE>> {
+    vole: VoleTriple,
+    key: FE,
     random_buffer: VecDeque<Mac<Prover, T>>,
-    sizes: VoleSizes,
+    _marker: PhantomData<T>,
 }
 
 impl<T> BufferedVoleSender<T>
 where
-    T: MacTypes,
-    T::VF: CanonicalSerialize + Copy + Sub<Output = T::VF>,
+    T: MacTypes<VF = FE, TF = FE>,
 {
     pub fn init<C: AbstractChannel, RNG: Rng + CryptoRng>(
         channel: &mut C,
-        rng: &mut RNG,
-        base_voles: Vec<Mac<Prover, T>>,
+        _rng: &mut RNG,
+        _base_voles: Vec<Mac<Prover, T>>,
     ) -> Result<Self> {
-        let sizes = VoleSizes::of::<T::VF, T::TF>();
-        ensure!(
-            base_voles.len() == sizes.base_voles_needed,
-            "wrong base VOLE count: expected {}, got {}",
-            sizes.base_voles_needed,
-            base_voles.len()
-        );
-        let sender = VoleSender::<T>::init(channel, rng)?;
-        channel.flush()?;
+        let mut key_bytes = [0u8; 32];
+        channel.read_bytes(&mut key_bytes)?;
+        let key = FE::from_bytes_le(&key_bytes).map_err(|e| eyre::eyre!("{e:?}"))?;
+
+        let mut comm = 0u64;
+        let mut io = SwankyCompatChannel::new(channel);
+        let mut vole = VoleTriple::new(1, true, &mut io, LPN17, &mut comm);
+        vole.setup_receiver(&mut io, &mut comm);
+        vole.extend_initialization();
+
         Ok(Self {
-            sender,
-            base_voles,
-            selector: 1,
+            vole,
+            key,
             random_buffer: VecDeque::new(),
-            sizes,
+            _marker: PhantomData,
         })
     }
 
@@ -66,75 +213,44 @@ where
     pub fn extend_random<C: AbstractChannel, RNG: Rng + CryptoRng>(
         &mut self,
         channel: &mut C,
-        rng: &mut RNG,
+        _rng: &mut RNG,
         additional: usize,
     ) -> Result<usize> {
-        let rounds = ceil_div(additional, self.sizes.voles_outputted);
-        let peer_rounds = exchange_u64(channel, rounds as u64)?;
+        let peer_requested = exchange_u64(channel, additional as u64)?;
         ensure!(
-            peer_rounds == rounds as u64,
-            "extend mismatch: sender wants {} rounds, peer wants {}",
-            rounds,
-            peer_rounds
+            peer_requested == additional as u64,
+            "extend mismatch: sender wants {}, peer wants {}",
+            additional,
+            peer_requested
         );
 
-        let mut added = 0usize;
-        for _ in 0..rounds {
-            let arena = KeyedArena::with_capacity(0, 0);
-
-            let mut comms_1 = vec![0u8; self.sizes.comms_1s];
-            let mut comms_2 = vec![0u8; self.sizes.comms_2r];
-            let mut comms_3 = vec![0u8; self.sizes.comms_3s];
-            let mut comms_4 = vec![0u8; self.sizes.comms_4r];
-            let mut comms_5 = vec![0u8; self.sizes.comms_5s];
-
-            let sender_stage2 = self.sender.send(
-                &arena,
-                self.selector,
-                rng,
-                &self.base_voles,
-                &mut comms_1,
-            )?;
-            channel.write_bytes(&comms_1)?;
-            channel.flush()?;
-
-            channel.read_bytes(&mut comms_2)?;
-            let mut sender_output = vec![Mac::zero(); self.sizes.voles_outputted];
-            let sender_stage3 = sender_stage2.stage2(
-                &self.sender,
-                &arena,
-                &self.base_voles,
-                &mut sender_output,
-                &comms_2,
-                &mut comms_3,
-            )?;
-            channel.write_bytes(&comms_3)?;
-            channel.flush()?;
-
-            channel.read_bytes(&mut comms_4)?;
-            sender_stage3.stage3(
-                &self.sender,
-                &arena,
-                &self.base_voles,
-                &mut sender_output,
-                &comms_4,
-                &mut comms_5,
-            )?;
-            channel.write_bytes(&comms_5)?;
-            channel.flush()?;
-
-            self.random_buffer.extend(sender_output.into_iter());
-            self.selector += 1;
-            added += self.sizes.voles_outputted;
+        if additional == 0 {
+            return Ok(0);
         }
 
-        Ok(added)
+        let mut y = vec![PsiFE::zero(); additional];
+        let mut z = vec![PsiFE::zero(); additional];
+        let mut comm = 0u64;
+        let mut io = SwankyCompatChannel::new(channel);
+        self.vole
+            .extend(&mut io, &mut y, &mut z, additional, &mut comm);
+
+        let two_key = self.key + self.key;
+        for i in 0..additional {
+            let r = to_local(z[i]);
+            let y_local = to_local(y[i]);
+            let beta = y_local - (two_key * r);
+            self.random_buffer
+                .push_back(Mac::prover_new(IS_PROVER, r, beta));
+        }
+
+        Ok(additional)
     }
 
     pub fn materialize_inputs<C: AbstractChannel>(
         &mut self,
         channel: &mut C,
-        inputs: &[T::VF],
+        inputs: &[FE],
     ) -> Result<Vec<Mac<Prover, T>>> {
         ensure!(
             self.random_buffer.len() >= inputs.len(),
@@ -142,8 +258,7 @@ where
             self.random_buffer.len(),
             inputs.len()
         );
-        let elem_len = <T::VF as CanonicalSerialize>::ByteReprLen::USIZE;
-        let mut encoded = Vec::with_capacity(8 + inputs.len() * elem_len);
+        let mut encoded = Vec::with_capacity(8 + inputs.len() * 32);
         encoded.extend_from_slice(&(inputs.len() as u64).to_le_bytes());
 
         let mut out = Vec::with_capacity(inputs.len());
@@ -151,7 +266,7 @@ where
             let random = self.random_buffer.pop_front().expect("checked capacity");
             let (r, beta) = random.prover_extract(IS_PROVER);
             let correction = x - r;
-            encoded.extend_from_slice(correction.to_bytes().as_slice());
+            encoded.extend_from_slice(&correction.to_bytes_le());
             out.push(Mac::prover_new(IS_PROVER, x, beta));
         }
 
@@ -161,43 +276,38 @@ where
     }
 }
 
-pub struct BufferedVoleReceiver<T: MacTypes> {
-    receiver: VoleReceiver<T>,
-    base_voles: Vec<Mac<Verifier, T>>,
-    selector: u64,
+pub struct BufferedVoleReceiver<T: MacTypes<VF = FE, TF = FE>> {
+    vole: VoleTriple,
     random_buffer: VecDeque<Mac<Verifier, T>>,
-    sizes: VoleSizes,
-    delta: T::TF,
+    delta: FE,
+    _marker: PhantomData<T>,
 }
 
 impl<T> BufferedVoleReceiver<T>
 where
-    T: MacTypes,
-    T::VF: CanonicalSerialize + Copy,
-    T::TF: Copy + std::ops::Sub<Output = T::TF> + std::ops::Mul<T::VF, Output = T::TF>,
+    T: MacTypes<VF = FE, TF = FE>,
 {
     pub fn init<C: AbstractChannel, RNG: Rng + CryptoRng>(
         channel: &mut C,
-        rng: &mut RNG,
-        delta: T::TF,
-        base_voles: Vec<Mac<Verifier, T>>,
+        _rng: &mut RNG,
+        delta: FE,
+        _base_voles: Vec<Mac<Verifier, T>>,
     ) -> Result<Self> {
-        let sizes = VoleSizes::of::<T::VF, T::TF>();
-        ensure!(
-            base_voles.len() == sizes.base_voles_needed,
-            "wrong base VOLE count: expected {}, got {}",
-            sizes.base_voles_needed,
-            base_voles.len()
-        );
-        let receiver = VoleReceiver::<T>::init(channel, rng, delta)?;
+        let key = -delta;
+        channel.write_bytes(&key.to_bytes_le())?;
         channel.flush()?;
+
+        let mut comm = 0u64;
+        let mut io = SwankyCompatChannel::new(channel);
+        let mut vole = VoleTriple::new(0, true, &mut io, LPN17, &mut comm);
+        vole.setup_sender(&mut io, to_psi(key), &mut comm);
+        vole.extend_initialization();
+
         Ok(Self {
-            receiver,
-            base_voles,
-            selector: 1,
+            vole,
             random_buffer: VecDeque::new(),
-            sizes,
             delta,
+            _marker: PhantomData,
         })
     }
 
@@ -208,69 +318,34 @@ where
     pub fn extend_random<C: AbstractChannel, RNG: Rng + CryptoRng>(
         &mut self,
         channel: &mut C,
-        rng: &mut RNG,
+        _rng: &mut RNG,
         additional: usize,
     ) -> Result<usize> {
-        let rounds = ceil_div(additional, self.sizes.voles_outputted);
-        let peer_rounds = exchange_u64(channel, rounds as u64)?;
+        let peer_requested = exchange_u64(channel, additional as u64)?;
         ensure!(
-            peer_rounds == rounds as u64,
-            "extend mismatch: receiver wants {} rounds, peer wants {}",
-            rounds,
-            peer_rounds
+            peer_requested == additional as u64,
+            "extend mismatch: receiver wants {}, peer wants {}",
+            additional,
+            peer_requested
         );
 
-        let mut added = 0usize;
-        for _ in 0..rounds {
-            let arena = KeyedArena::with_capacity(0, 0);
-
-            let mut comms_1 = vec![0u8; self.sizes.comms_1s];
-            let mut comms_2 = vec![0u8; self.sizes.comms_2r];
-            let mut comms_3 = vec![0u8; self.sizes.comms_3s];
-            let mut comms_4 = vec![0u8; self.sizes.comms_4r];
-            let mut comms_5 = vec![0u8; self.sizes.comms_5s];
-
-            channel.read_bytes(&mut comms_1)?;
-            let mut receiver_output = vec![Mac::zero(); self.sizes.voles_outputted];
-            let receiver_stage2 = self.receiver.receive(
-                &arena,
-                self.selector,
-                rng,
-                &self.base_voles,
-                &mut receiver_output,
-                &comms_1,
-                &mut comms_2,
-            )?;
-            channel.write_bytes(&comms_2)?;
-            channel.flush()?;
-
-            channel.read_bytes(&mut comms_3)?;
-            let receiver_stage3 = receiver_stage2.stage2(
-                &self.receiver,
-                &arena,
-                &self.base_voles,
-                &mut receiver_output,
-                &comms_3,
-                &mut comms_4,
-            )?;
-            channel.write_bytes(&comms_4)?;
-            channel.flush()?;
-
-            channel.read_bytes(&mut comms_5)?;
-            receiver_stage3.stage3(
-                &self.receiver,
-                &arena,
-                &self.base_voles,
-                &mut receiver_output,
-                &comms_5,
-            )?;
-
-            self.random_buffer.extend(receiver_output.into_iter());
-            self.selector += 1;
-            added += self.sizes.voles_outputted;
+        if additional == 0 {
+            return Ok(0);
         }
 
-        Ok(added)
+        let mut k = vec![PsiFE::zero(); additional];
+        let mut dummy = vec![PsiFE::zero(); additional];
+        let mut comm = 0u64;
+        let mut io = SwankyCompatChannel::new(channel);
+        self.vole
+            .extend(&mut io, &mut k, &mut dummy, additional, &mut comm);
+
+        for tag in k {
+            self.random_buffer
+                .push_back(Mac::verifier_new(IS_VERIFIER, to_local(tag)));
+        }
+
+        Ok(additional)
     }
 
     pub fn materialize_next<C: AbstractChannel>(
@@ -294,19 +369,14 @@ where
             count
         );
 
-        let elem_len = <T::VF as CanonicalSerialize>::ByteReprLen::USIZE;
-        let mut correction_bytes = vec![0u8; count * elem_len];
+        let mut correction_bytes = vec![0u8; count * 32];
         channel.read_bytes(&mut correction_bytes)?;
 
         let mut out = Vec::with_capacity(count);
-        for chunk in correction_bytes.chunks_exact(elem_len) {
-            let mut bytes: generic_array::GenericArray<
-                u8,
-                <T::VF as CanonicalSerialize>::ByteReprLen,
-            > = Default::default();
+        for chunk in correction_bytes.chunks_exact(32) {
+            let mut bytes = [0u8; 32];
             bytes.copy_from_slice(chunk);
-            let correction =
-                T::VF::from_bytes(&bytes).context("failed to parse VOLE correction element")?;
+            let correction = FE::from_bytes_le(&bytes).map_err(|e| eyre::eyre!("{e:?}"))?;
 
             let random = self.random_buffer.pop_front().expect("checked capacity");
             let updated_tag = random.tag(IS_VERIFIER) - correction * self.delta;

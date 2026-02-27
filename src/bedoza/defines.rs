@@ -13,14 +13,9 @@ pub fn random_fe_vec(cnt: usize) -> Result<Vec<FE>> {
 pub fn random_fe_vec_from_rng(rng: &mut impl Rng, cnt: usize) -> Result<Vec<FE>> {
     let mut out = Vec::with_capacity(cnt);
     for _ in 0..cnt {
-        let fe = loop {
-            let mut bytes = [0u8; 32];
-            rng.fill(&mut bytes);
-            if let Ok(fe) = FE::from_bytes_le(&bytes) {
-                break fe;
-            }
-        };
-        out.push(fe);
+        let mut bytes = [0u8; 32];
+        rng.fill(&mut bytes);
+        out.push(FE::from_bytes_le_mod_order(&bytes));
     }
     Ok(out)
 }

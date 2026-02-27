@@ -2,6 +2,8 @@ pub mod bedoza_receiver;
 pub mod bedoza_sender;
 pub mod comm_util;
 pub mod defines;
+pub mod vole_auth;
+pub mod wolverine;
 
 use crate::{
     bedoza::{

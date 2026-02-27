@@ -2,11 +2,7 @@ use circuit_psi::scalar_field::{FourQScalarField, fq};
 use circuit_psi::tcp_channel::swanky_channel_from_tcp_stream;
 use circuit_psi::vole_buffer::{BufferedVoleReceiver, BufferedVoleSender};
 use eyre::WrapErr;
-use mac_n_cheese_vole::{
-    mac::Mac,
-    specialization::NoSpecialization,
-    vole::VoleSizes,
-};
+use mac_n_cheese_vole::{mac::Mac, specialization::NoSpecialization, vole::VoleSizes};
 use std::{
     net::{TcpListener, TcpStream},
     thread,
@@ -57,7 +53,13 @@ fn sender_party(
     extend_2: usize,
     materialize_1: usize,
     materialize_2: usize,
-) -> eyre::Result<(Vec<Mac<Prover, ExampleMac>>, Vec<Mac<Prover, ExampleMac>>, u64, u64, usize)> {
+) -> eyre::Result<(
+    Vec<Mac<Prover, ExampleMac>>,
+    Vec<Mac<Prover, ExampleMac>>,
+    u64,
+    u64,
+    usize,
+)> {
     let (socket, _) = listener.accept().wrap_err("sender accept")?;
     let mut channel = swanky_channel_from_tcp_stream(socket).map_err(|e| eyre::eyre!("{}", e))?;
 
@@ -165,16 +167,15 @@ fn main() -> eyre::Result<()> {
             materialize_2,
         )
     });
-    let (receiver_1, receiver_2, receiver_sent, receiver_received, receiver_left) =
-        receiver_party(
-            addr,
-            delta,
-            base_receiver,
-            extend_1,
-            extend_2,
-            materialize_1,
-            materialize_2,
-        )?;
+    let (receiver_1, receiver_2, receiver_sent, receiver_received, receiver_left) = receiver_party(
+        addr,
+        delta,
+        base_receiver,
+        extend_1,
+        extend_2,
+        materialize_1,
+        materialize_2,
+    )?;
     let (sender_1, sender_2, sender_sent, sender_received, sender_left) = sender_handle
         .join()
         .expect("sender thread panicked")
