@@ -40,3 +40,12 @@ impl TwoKeyPRP {
         self.node_expand_1to2(&mut children[2..4], &parents[1]);
     }
 }
+
+pub fn fe_to_u128_limbs(value: FE) -> [u128; FE_LIMBS] {
+    let bytes = value.to_bytes_le();
+    let mut limbs = [0u128; FE_LIMBS];
+    for (i, chunk) in bytes.chunks_exact(16).take(FE_LIMBS).enumerate() {
+        limbs[i] = u128::from_le_bytes(chunk.try_into().unwrap());
+    }
+    limbs
+}
