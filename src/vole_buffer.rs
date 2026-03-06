@@ -1,14 +1,12 @@
-use crate::scalar_field::FourQScalarField as FE;
-use eyre::{Result, ensure};
-use mac_n_cheese_vole::mac::{Mac, MacTypes};
-use p256::EncodedPoint;
-use psi_vole::{
-    comm_channel::CommunicationChannel,
-    fourq_field::FourQScalarField as PsiFE,
+use crate::{
+    scalar_field::FourQScalarField as PsiFE,
+    scalar_field::FourQScalarField as FE,
     vole_triple::{LPN17, VoleTriple},
 };
+use eyre::{Result, ensure};
+use mac_n_cheese_vole::mac::{Mac, MacTypes};
 use rand08::{CryptoRng, Rng};
-use std::{collections::VecDeque, io, marker::PhantomData};
+use std::{collections::VecDeque, marker::PhantomData};
 use swanky_channel_legacy::AbstractChannel;
 use swanky_party::{IS_PROVER, IS_VERIFIER, Prover, Verifier};
 
@@ -26,150 +24,6 @@ fn exchange_u64(channel: &mut impl AbstractChannel, value: u64) -> Result<u64> {
     let mut peer = [0u8; 8];
     channel.read_bytes(&mut peer)?;
     Ok(u64::from_le_bytes(peer))
-}
-
-struct SwankyCompatChannel<'a, C: AbstractChannel> {
-    channel: &'a mut C,
-}
-
-impl<'a, C: AbstractChannel> SwankyCompatChannel<'a, C> {
-    fn new(channel: &'a mut C) -> Self {
-        Self { channel }
-    }
-}
-
-impl<C: AbstractChannel> CommunicationChannel for SwankyCompatChannel<'_, C> {
-    fn send_u8(&mut self, data: &[u8]) -> io::Result<u64> {
-        self.channel.write_bytes(&(data.len() as u64).to_le_bytes())?;
-        self.channel.write_bytes(data)?;
-        self.channel.flush()?;
-        Ok(data.len() as u64)
-    }
-
-    fn receive_u8(&mut self) -> io::Result<Vec<u8>> {
-        let mut len_buf = [0u8; 8];
-        self.channel.read_bytes(&mut len_buf)?;
-        let len = u64::from_le_bytes(len_buf) as usize;
-        let mut out = vec![0u8; len];
-        self.channel.read_bytes(&mut out)?;
-        Ok(out)
-    }
-
-    fn send_block<const N: usize>(&mut self, data: &[[u8; N]]) -> io::Result<u64> {
-        self.channel.write_bytes(&(data.len() as u64).to_le_bytes())?;
-        if !data.is_empty() {
-            let mut packed = Vec::with_capacity(data.len() * N);
-            for block in data {
-                packed.extend_from_slice(block);
-            }
-            self.channel.write_bytes(&packed)?;
-        }
-        self.channel.flush()?;
-        Ok((data.len() * N) as u64)
-    }
-
-    fn receive_block<const N: usize>(&mut self) -> io::Result<Vec<[u8; N]>> {
-        let mut len_buf = [0u8; 8];
-        self.channel.read_bytes(&mut len_buf)?;
-        let len = u64::from_le_bytes(len_buf) as usize;
-        let mut out = vec![[0u8; N]; len];
-        for block in &mut out {
-            self.channel.read_bytes(block)?;
-        }
-        Ok(out)
-    }
-
-    fn send_bits(&mut self, bits: &[bool]) -> io::Result<u64> {
-        let mut packed = Vec::with_capacity(bits.len().div_ceil(8));
-        let mut byte = 0u8;
-        for (i, &bit) in bits.iter().enumerate() {
-            if bit {
-                byte |= 1 << (i % 8);
-            }
-            if i % 8 == 7 || i == bits.len() - 1 {
-                packed.push(byte);
-                byte = 0;
-            }
-        }
-        self.channel.write_bytes(&(bits.len() as u64).to_le_bytes())?;
-        self.channel.write_bytes(&packed)?;
-        self.channel.flush()?;
-        Ok(packed.len() as u64)
-    }
-
-    fn receive_bits(&mut self) -> io::Result<Vec<bool>> {
-        let mut len_buf = [0u8; 8];
-        self.channel.read_bytes(&mut len_buf)?;
-        let bits_len = u64::from_le_bytes(len_buf) as usize;
-        let bytes_len = bits_len.div_ceil(8);
-        let mut packed = vec![0u8; bytes_len];
-        self.channel.read_bytes(&mut packed)?;
-
-        let mut bits = Vec::with_capacity(bits_len);
-        for i in 0..bits_len {
-            bits.push((packed[i / 8] & (1 << (i % 8))) != 0);
-        }
-        Ok(bits)
-    }
-
-    fn send_stark252(&mut self, elements: &[PsiFE]) -> io::Result<u64> {
-        let total_size = (elements.len() * 32) as u64;
-        self.channel.write_bytes(&total_size.to_le_bytes())?;
-        if !elements.is_empty() {
-            let mut packed = Vec::with_capacity(elements.len() * 32);
-            for element in elements {
-                packed.extend_from_slice(&element.to_bytes_le());
-            }
-            self.channel.write_bytes(&packed)?;
-        }
-        self.channel.flush()?;
-        Ok(total_size)
-    }
-
-    fn receive_stark252(&mut self) -> io::Result<Vec<PsiFE>> {
-        let mut size_buf = [0u8; 8];
-        self.channel.read_bytes(&mut size_buf)?;
-        let total_size = u64::from_le_bytes(size_buf) as usize;
-        if total_size % 32 != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "invalid FE byte length",
-            ));
-        }
-        let mut raw = vec![0u8; total_size];
-        self.channel.read_bytes(&mut raw)?;
-        raw.chunks_exact(32)
-            .map(|chunk| {
-                let mut bytes = [0u8; 32];
-                bytes.copy_from_slice(chunk);
-                PsiFE::from_bytes_le(&bytes).map_err(|e| {
-                    io::Error::new(io::ErrorKind::InvalidData, format!("invalid FE: {e:?}"))
-                })
-            })
-            .collect()
-    }
-
-    fn send_point(&mut self, point: &EncodedPoint) -> io::Result<u64> {
-        let bytes = point.as_bytes();
-        self.channel.write_bytes(&(bytes.len() as u64).to_le_bytes())?;
-        self.channel.write_bytes(bytes)?;
-        self.channel.flush()?;
-        Ok(bytes.len() as u64)
-    }
-
-    fn receive_point(&mut self) -> io::Result<EncodedPoint> {
-        let mut len_buf = [0u8; 8];
-        self.channel.read_bytes(&mut len_buf)?;
-        let len = u64::from_le_bytes(len_buf) as usize;
-        let mut bytes = vec![0u8; len];
-        self.channel.read_bytes(&mut bytes)?;
-        EncodedPoint::from_bytes(&bytes)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid EC point"))
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.channel.flush()
-    }
 }
 
 pub struct BufferedVoleSender<T: MacTypes<VF = FE, TF = FE>> {
@@ -193,9 +47,8 @@ where
         let key = FE::from_bytes_le(&key_bytes).map_err(|e| eyre::eyre!("{e:?}"))?;
 
         let mut comm = 0u64;
-        let mut io = SwankyCompatChannel::new(channel);
-        let mut vole = VoleTriple::new(1, true, &mut io, LPN17, &mut comm);
-        vole.setup_receiver(&mut io, &mut comm);
+        let mut vole = VoleTriple::new(1, true, channel, LPN17, &mut comm);
+        vole.setup_receiver(channel, &mut comm);
         vole.extend_initialization();
 
         Ok(Self {
@@ -231,9 +84,8 @@ where
         let mut y = vec![PsiFE::zero(); additional];
         let mut z = vec![PsiFE::zero(); additional];
         let mut comm = 0u64;
-        let mut io = SwankyCompatChannel::new(channel);
         self.vole
-            .extend(&mut io, &mut y, &mut z, additional, &mut comm);
+            .extend(channel, &mut y, &mut z, additional, &mut comm);
 
         let two_key = self.key + self.key;
         for i in 0..additional {
@@ -298,9 +150,8 @@ where
         channel.flush()?;
 
         let mut comm = 0u64;
-        let mut io = SwankyCompatChannel::new(channel);
-        let mut vole = VoleTriple::new(0, true, &mut io, LPN17, &mut comm);
-        vole.setup_sender(&mut io, to_psi(key), &mut comm);
+        let mut vole = VoleTriple::new(0, true, channel, LPN17, &mut comm);
+        vole.setup_sender(channel, to_psi(key), &mut comm);
         vole.extend_initialization();
 
         Ok(Self {
@@ -336,9 +187,8 @@ where
         let mut k = vec![PsiFE::zero(); additional];
         let mut dummy = vec![PsiFE::zero(); additional];
         let mut comm = 0u64;
-        let mut io = SwankyCompatChannel::new(channel);
         self.vole
-            .extend(&mut io, &mut k, &mut dummy, additional, &mut comm);
+            .extend(channel, &mut k, &mut dummy, additional, &mut comm);
 
         for tag in k {
             self.random_buffer

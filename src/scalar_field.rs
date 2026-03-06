@@ -10,6 +10,7 @@ use swanky_serialization::{BiggerThanModulus, CanonicalSerialize};
 #[PrimeFieldReprEndianness = "little"]
 pub struct FourQScalarField([u64; 4]);
 
+pub const FOURQ_SCALAR_BITS: usize = 246;
 pub const FOURQ_ORDER_WORDS_LE: [u64; 4] = [
     0x2FB2_540E_C776_8CE7,
     0xDFBD_004D_FE0F_7999,
@@ -322,5 +323,23 @@ impl std::ops::Mul<&FourQScalarField> for &FourQScalarField {
 
     fn mul(self, rhs: &FourQScalarField) -> Self::Output {
         *self * *rhs
+    }
+}
+
+pub fn random_fourq_elements_from_prg(
+    prg: &mut psi_aes::prg::PRG,
+    elements: &mut [FourQScalarField],
+) {
+    const CHUNK: usize = 1024;
+    let mut blocks = vec![[0u8; 32]; CHUNK];
+    let mut offset = 0usize;
+
+    while offset < elements.len() {
+        let take = (elements.len() - offset).min(CHUNK);
+        prg.random_32byte_block(&mut blocks[..take]);
+        for i in 0..take {
+            elements[offset + i] = FourQScalarField::from_bytes_le_mod_order(&blocks[i]);
+        }
+        offset += take;
     }
 }

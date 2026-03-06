@@ -20,15 +20,23 @@ crypto-bigint = { version = "0.6.1", features = ["hybrid-array"] }
 serde = { version = "1.0.228", features = ["derive"] }
 subtle = "2.6.1"
 mac-n-cheese-vole = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/50e0aba/edge/mac-n-cheese/vole" }
-keyed_arena = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/50e0aba/edge/keyed_arena" }
 swanky-aes-rng = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/50e0aba/edge/aes-rng" }
 swanky-channel-legacy = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/50e0aba/edge/channel-legacy" }
 swanky-field-binary = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/50e0aba/edge/field-binary" }
 swanky-field = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/50e0aba/edge/field" }
 swanky-party = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/50e0aba/edge/party" }
 swanky-serialization = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/50e0aba/edge/serialization" }
-psi-vole = { path = "vole" }
+psi-aes = { path = "src/psi-aes" }
+aes = "0.8.4"
 p256 = "0.13.2"
+
+[[bin]]
+name = "vole_cope"
+path = "src/vole/bin/cope.rs"
+
+[[bin]]
+name = "mascot_unauthenticated_triple"
+path = "src/mascot/bin/unauthenticated_triple.rs"
 
 [profile.release]
 lto = true
