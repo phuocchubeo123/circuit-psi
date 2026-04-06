@@ -1,45 +1,27 @@
 use anyhow::{Context, Result, anyhow, ensure};
 use circuit_psi::{
     bedoza::{
+        bedoza_receiver::BeDOZaReceiver,
+        bedoza_sender::BeDOZaSender,
         defines::{FE, random_fe_vec_from_rng},
-        vole_auth::FourQVoleMac,
     },
     group::Group,
     scalar_field::fq,
     shuffle_inputer::Inputer,
     shuffle_shuffler::Shuffler,
-    tcp_channel::{TcpChannel, swanky_channel_from_tcp_stream},
+    tcp_channel::{connect_with_retry, listen_to},
+    vole_triple::LPN21,
     vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
 };
-use mac_n_cheese_vole::{mac::Mac, vole::VoleSizes};
+use circuit_psi::mac_n_cheese_vole::vole::VoleSizes;
 use rand::{SeedableRng, rngs::StdRng};
 use std::{
-    net::{SocketAddr, TcpListener, TcpStream},
+    net::TcpListener,
     thread,
-    time::Duration,
 };
-use swanky_aes_rng::AesRng;
-use swanky_party::{IS_PROVER, IS_VERIFIER, Prover, Verifier};
-
-type SenderMac = Mac<Prover, FourQVoleMac>;
-type ReceiverMac = Mac<Verifier, FourQVoleMac>;
-
-fn configure_stream(stream: &TcpStream) -> Result<()> {
-    stream.set_nodelay(true)?;
-    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(30)))?;
-    Ok(())
-}
-
-fn connect_with_retry(addr: SocketAddr) -> Result<TcpStream> {
-    for _ in 0..300 {
-        if let Ok(stream) = TcpStream::connect(addr) {
-            return Ok(stream);
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-    Err(anyhow!("failed to connect to {}", addr))
-}
+use swanky_channel_legacy::AesRng;
+type SenderMac = BeDOZaSender;
+type ReceiverMac = BeDOZaReceiver;
 
 fn make_base_voles(key: FE, count: usize, offset: u64) -> (Vec<SenderMac>, Vec<ReceiverMac>) {
     let mut sender = Vec::with_capacity(count);
@@ -48,8 +30,8 @@ fn make_base_voles(key: FE, count: usize, offset: u64) -> (Vec<SenderMac>, Vec<R
         let idx = offset + i as u64;
         let x = fq(idx + 1);
         let beta = fq(3 * idx + 7);
-        sender.push(Mac::prover_new(IS_PROVER, x, beta));
-        receiver.push(Mac::verifier_new(IS_VERIFIER, x * key + beta));
+        sender.push(BeDOZaSender::new(x, beta, false));
+        receiver.push(BeDOZaReceiver::new(x * key + beta, key, false));
     }
     (sender, receiver)
 }
@@ -67,8 +49,8 @@ where
 }
 
 fn run_inputer(
-    swanky_listener: TcpListener,
-    tcp_listener: TcpListener,
+    swanky_addr: String,
+    tcp_addr: String,
     delta_0: FE,
     x_values: Vec<FE>,
     auth_sender_base: Vec<SenderMac>,
@@ -76,25 +58,21 @@ fn run_inputer(
     k1_mul_sender_base: Vec<SenderMac>,
     k1_prime_mul_sender_base: Vec<SenderMac>,
 ) -> Result<Vec<Group>> {
-    let (swanky_stream, _) = swanky_listener.accept().context("inputer swanky accept")?;
-    configure_stream(&swanky_stream)?;
-    let mut channel = swanky_channel_from_tcp_stream(swanky_stream)?;
-
-    let (tcp_stream, _) = tcp_listener.accept().context("inputer tcp accept")?;
-    configure_stream(&tcp_stream)?;
-    let mut tcp_channel = TcpChannel::new(tcp_stream);
+    let mut channel =
+        listen_to(&swanky_addr).with_context(|| format!("inputer listen swanky at {}", swanky_addr))?;
+    let mut tcp_channel =
+        listen_to(&tcp_addr).with_context(|| format!("inputer listen tcp at {}", tcp_addr))?;
 
     let mut vole_rng = AesRng::new();
     let mut auth_vole_sender = run_step("Inputer", "init_auth_vole_sender", || {
-        BufferedVoleSender::<FourQVoleMac>::init(&mut channel, &mut vole_rng, auth_sender_base)
+        BufferedVoleSender::init(&mut channel, LPN21)
             .map_err(|e| anyhow!("init sender VOLE failed: {}", e))
     })?;
     let mut auth_vole_receiver = run_step("Inputer", "init_auth_vole_receiver", || {
-        BufferedVoleReceiver::<FourQVoleMac>::init(
+        BufferedVoleReceiver::init(
             &mut channel,
-            &mut vole_rng,
             -delta_0,
-            auth_receiver_base,
+            LPN21,
         )
         .map_err(|e| anyhow!("init receiver VOLE failed: {}", e))
     })?;
@@ -113,15 +91,14 @@ fn run_inputer(
     })?;
 
     let mut k1_mul_vole_sender = run_step("Inputer", "init_k1_mul_vole_sender", || {
-        BufferedVoleSender::<FourQVoleMac>::init(&mut channel, &mut vole_rng, k1_mul_sender_base)
+        BufferedVoleSender::init(&mut channel, LPN21)
             .map_err(|e| anyhow!("init k1-mul sender VOLE failed: {}", e))
     })?;
     let mut k1_prime_mul_vole_sender =
         run_step("Inputer", "init_k1_prime_mul_vole_sender", || {
-            BufferedVoleSender::<FourQVoleMac>::init(
+            BufferedVoleSender::init(
                 &mut channel,
-                &mut vole_rng,
-                k1_prime_mul_sender_base,
+                LPN21,
             )
             .map_err(|e| anyhow!("init k1'-mul sender VOLE failed: {}", e))
         })?;
@@ -278,8 +255,8 @@ fn run_inputer(
 }
 
 fn run_shuffler(
-    swanky_addr: SocketAddr,
-    tcp_addr: SocketAddr,
+    swanky_addr: String,
+    tcp_addr: String,
     delta_1: FE,
     permutation: Vec<usize>,
     k1_prime: FE,
@@ -289,26 +266,22 @@ fn run_shuffler(
     k1_prime_mul_receiver_base: Vec<ReceiverMac>,
     shuffler_rng_seed: [u8; 32],
 ) -> Result<Vec<Group>> {
-    let swanky_stream = connect_with_retry(swanky_addr)?;
-    configure_stream(&swanky_stream)?;
-    let mut channel = swanky_channel_from_tcp_stream(swanky_stream)?;
-
-    let tcp_stream = connect_with_retry(tcp_addr)?;
-    configure_stream(&tcp_stream)?;
-    let mut tcp_channel = TcpChannel::new(tcp_stream);
+    let mut channel =
+        connect_with_retry(&swanky_addr).with_context(|| format!("shuffler connect swanky {}", swanky_addr))?;
+    let mut tcp_channel =
+        connect_with_retry(&tcp_addr).with_context(|| format!("shuffler connect tcp {}", tcp_addr))?;
 
     let mut vole_rng = AesRng::new();
     let mut auth_vole_receiver = run_step("Shuffler", "init_auth_vole_receiver", || {
-        BufferedVoleReceiver::<FourQVoleMac>::init(
+        BufferedVoleReceiver::init(
             &mut channel,
-            &mut vole_rng,
             -delta_1,
-            auth_receiver_base,
+            LPN21,
         )
         .map_err(|e| anyhow!("init receiver VOLE failed: {}", e))
     })?;
     let mut auth_vole_sender = run_step("Shuffler", "init_auth_vole_sender", || {
-        BufferedVoleSender::<FourQVoleMac>::init(&mut channel, &mut vole_rng, auth_sender_base)
+        BufferedVoleSender::init(&mut channel, LPN21)
             .map_err(|e| anyhow!("init sender VOLE failed: {}", e))
     })?;
 
@@ -326,21 +299,19 @@ fn run_shuffler(
     })?;
 
     let mut k1_mul_vole_receiver = run_step("Shuffler", "init_k1_mul_vole_receiver", || {
-        BufferedVoleReceiver::<FourQVoleMac>::init(
+        BufferedVoleReceiver::init(
             &mut channel,
-            &mut vole_rng,
             -k1,
-            k1_mul_receiver_base,
+            LPN21,
         )
         .map_err(|e| anyhow!("init k1-mul receiver VOLE failed: {}", e))
     })?;
     let mut k1_prime_mul_vole_receiver =
         run_step("Shuffler", "init_k1_prime_mul_vole_receiver", || {
-            BufferedVoleReceiver::<FourQVoleMac>::init(
+            BufferedVoleReceiver::init(
                 &mut channel,
-                &mut vole_rng,
                 -k1_prime,
-                k1_prime_mul_receiver_base,
+                LPN21,
             )
             .map_err(|e| anyhow!("init k1'-mul receiver VOLE failed: {}", e))
         })?;
@@ -540,16 +511,22 @@ fn main() -> Result<()> {
     let swanky_listener = TcpListener::bind("127.0.0.1:0").context("bind swanky listener")?;
     let swanky_addr = swanky_listener
         .local_addr()
-        .context("read swanky listener address")?;
+        .context("read swanky listener address")?
+        .to_string();
+    drop(swanky_listener);
     let tcp_listener = TcpListener::bind("127.0.0.1:0").context("bind tcp listener")?;
     let tcp_addr = tcp_listener
         .local_addr()
-        .context("read tcp listener address")?;
+        .context("read tcp listener address")?
+        .to_string();
+    drop(tcp_listener);
 
+    let inputer_swanky_addr = swanky_addr.clone();
+    let inputer_tcp_addr = tcp_addr.clone();
     let inputer_handle = thread::spawn(move || {
         run_inputer(
-            swanky_listener,
-            tcp_listener,
+            inputer_swanky_addr,
+            inputer_tcp_addr,
             delta_0,
             x_values,
             inputer_auth_sender_base,

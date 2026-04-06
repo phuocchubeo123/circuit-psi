@@ -1,27 +1,26 @@
+use circuit_psi::bedoza::{bedoza_receiver::BeDOZaReceiver, bedoza_sender::BeDOZaSender};
 use circuit_psi::scalar_field::{FourQScalarField, fq};
+use circuit_psi::vole_triple::LPN21;
 use circuit_psi::vole_buffer::{BufferedVoleReceiver, BufferedVoleSender};
 use eyre::WrapErr;
-use mac_n_cheese_vole::{mac::Mac, specialization::NoSpecialization, vole::VoleSizes};
+use circuit_psi::mac_n_cheese_vole::vole::VoleSizes;
 use std::{thread, time::Instant};
-use swanky_aes_rng::AesRng;
+use swanky_channel_legacy::AesRng;
 use swanky_channel_legacy::track_unix_channel_pair;
-use swanky_party::{IS_PROVER, IS_VERIFIER, Prover, Verifier};
-
-type ExampleMac = (FourQScalarField, FourQScalarField, NoSpecialization);
 
 const DEFAULT_TARGET_VOLES: usize = 1_000_000;
 
 fn make_base_voles(
     alpha: FourQScalarField,
     count: usize,
-) -> (Vec<Mac<Prover, ExampleMac>>, Vec<Mac<Verifier, ExampleMac>>) {
+) -> (Vec<BeDOZaSender>, Vec<BeDOZaReceiver>) {
     let mut sender = Vec::with_capacity(count);
     let mut receiver = Vec::with_capacity(count);
     for i in 0..count {
         let x = fq((i as u64) + 1);
         let beta = fq((i as u64) * 11 + 17);
-        sender.push(Mac::prover_new(IS_PROVER, x, beta));
-        receiver.push(Mac::verifier_new(IS_VERIFIER, x * alpha + beta));
+        sender.push(BeDOZaSender::new(x, beta, false));
+        receiver.push(BeDOZaReceiver::new(x * alpha + beta, alpha, false));
     }
     (sender, receiver)
 }
@@ -58,7 +57,7 @@ fn main() -> eyre::Result<()> {
     let sender_thread = thread::spawn(move || -> eyre::Result<(usize, u128, usize, f64, u128)> {
         let start = Instant::now();
         let mut rng = AesRng::new();
-        let mut vole = BufferedVoleSender::<ExampleMac>::init(&mut sender_channel, &mut rng, base_sender)
+        let mut vole = BufferedVoleSender::init(&mut sender_channel, LPN21)
             .wrap_err("init sender VOLE")?;
         let _added = vole
             .extend_random(&mut sender_channel, &mut rng, target_voles)
@@ -68,9 +67,8 @@ fn main() -> eyre::Result<()> {
             .wrap_err("materialize sender VOLE inputs")?;
 
         let mut checksum = 0u128;
-        for mac in sender_output {
-            let (x, beta) = mac.prover_extract(IS_PROVER);
-            checksum = fold_field(checksum, x * alpha + beta);
+        for s in sender_output {
+            checksum = fold_field(checksum, s.val() * alpha + s.pad());
         }
 
         Ok((
@@ -85,7 +83,7 @@ fn main() -> eyre::Result<()> {
     let receiver_start = Instant::now();
     let mut rng = AesRng::new();
     let mut receiver_vole =
-        BufferedVoleReceiver::<ExampleMac>::init(&mut receiver_channel, &mut rng, delta, base_receiver)
+        BufferedVoleReceiver::init(&mut receiver_channel, delta, LPN21)
             .wrap_err("init receiver VOLE")?;
     let _added = receiver_vole
         .extend_random(&mut receiver_channel, &mut rng, target_voles)
@@ -95,8 +93,8 @@ fn main() -> eyre::Result<()> {
         .wrap_err("materialize receiver VOLE outputs")?;
 
     let mut receiver_checksum = 0u128;
-    for mac in receiver_output {
-        receiver_checksum = fold_field(receiver_checksum, mac.tag(IS_VERIFIER));
+    for r in receiver_output {
+        receiver_checksum = fold_field(receiver_checksum, r.tag());
     }
     let receiver_elapsed_ms = receiver_start.elapsed().as_millis();
     let receiver_left = receiver_vole.random_available();

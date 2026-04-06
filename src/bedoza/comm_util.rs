@@ -1,14 +1,14 @@
-use crate::{bedoza::defines::FE, tcp_channel::TcpChannel};
+use crate::{bedoza::defines::FE, tcp_channel::SwankyChannel};
 use anyhow::{Result, anyhow};
 
 const FE_BYTES: usize = 32;
 
-pub fn send_fe(value: FE, channel: &mut TcpChannel) -> Result<()> {
+pub fn send_fe(value: FE, channel: &mut SwankyChannel) -> Result<()> {
     let bytes = value.to_bytes_le();
     channel.send(bytes.as_ref())
 }
 
-pub fn receive_fe(channel: &mut TcpChannel) -> Result<FE> {
+pub fn receive_fe(channel: &mut SwankyChannel) -> Result<FE> {
     let raw = channel.receive()?;
     let raw_len = raw.len();
     let arr: [u8; FE_BYTES] = raw
@@ -18,7 +18,7 @@ pub fn receive_fe(channel: &mut TcpChannel) -> Result<FE> {
     FE::from_bytes_le(&arr).map_err(|e| anyhow!("Invalid FE encoding: {:?}", e))
 }
 
-pub fn send_fe_vec(values: &[FE], channel: &mut TcpChannel) -> Result<()> {
+pub fn send_fe_vec(values: &[FE], channel: &mut SwankyChannel) -> Result<()> {
     let mut buf = Vec::with_capacity(values.len() * FE_BYTES);
     for value in values {
         buf.extend_from_slice(value.to_bytes_le().as_ref());
@@ -26,7 +26,7 @@ pub fn send_fe_vec(values: &[FE], channel: &mut TcpChannel) -> Result<()> {
     channel.send(&buf)
 }
 
-pub fn receive_fe_vec(channel: &mut TcpChannel) -> Result<Vec<FE>> {
+pub fn receive_fe_vec(channel: &mut SwankyChannel) -> Result<Vec<FE>> {
     let raw = channel.receive()?;
     let mut chunks = raw.chunks_exact(FE_BYTES);
     if !chunks.remainder().is_empty() {

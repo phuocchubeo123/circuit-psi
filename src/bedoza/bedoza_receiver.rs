@@ -1,6 +1,6 @@
 use crate::{
     bedoza::{comm_util::receive_fe_vec, defines::FE},
-    tcp_channel::TcpChannel,
+    tcp_channel::SwankyChannel,
 };
 use anyhow::{Result, anyhow, ensure};
 
@@ -36,7 +36,7 @@ impl BeDOZaReceiver {
 
 pub fn receive_share_values_receiver(
     prepared_bedoza_receivers: &[BeDOZaReceiver],
-    channel: &mut TcpChannel,
+    channel: &mut SwankyChannel,
 ) -> Result<Vec<BeDOZaReceiver>> {
     let masked_vals =
         receive_fe_vec(channel).map_err(|e| anyhow!("Failed to receive FE vec: {}", e))?;
@@ -53,7 +53,7 @@ pub fn receive_share_values_receiver(
 /// Receive the shares from BeDOZaSender
 pub fn receive_open_shares(
     bedoza_receivers: &[BeDOZaReceiver],
-    channel: &mut TcpChannel,
+    channel: &mut SwankyChannel,
 ) -> Result<Vec<FE>> {
     // First check whether keys of every BeDOZaReceiver are the same (since they come from the same person)
     let key = bedoza_receivers[0].key();

@@ -34,22 +34,60 @@ dependencies = [
 ]
 
 [[package]]
+name = "anstream"
+version = "0.6.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "43d5b281e737544384e969a5ccad3f1cdd24b48086a0fc1b2a5262a26b8f4f4a"
+dependencies = [
+ "anstyle",
+ "anstyle-parse",
+ "anstyle-query",
+ "anstyle-wincon",
+ "colorchoice",
+ "is_terminal_polyfill",
+ "utf8parse",
+]
+
+[[package]]
+name = "anstyle"
+version = "1.0.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000"
+
+[[package]]
+name = "anstyle-parse"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e7644824f0aa2c7b9384579234ef10eb7efb6a0deb83f9630a49594dd9c15c2"
+dependencies = [
+ "utf8parse",
+]
+
+[[package]]
+name = "anstyle-query"
+version = "1.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
+dependencies = [
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "anstyle-wincon"
+version = "3.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
+dependencies = [
+ "anstyle",
+ "once_cell_polyfill",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.102"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
-
-[[package]]
-name = "arrayref"
-version = "0.3.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb"
-
-[[package]]
-name = "arrayvec"
-version = "0.7.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
 name = "autocfg"
@@ -140,20 +178,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "blake3"
-version = "1.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2468ef7d57b3fb7e16b576e8377cdbde2320c60e1491e961d11da40fc4f02a2d"
-dependencies = [
- "arrayref",
- "arrayvec",
- "cc",
- "cfg-if",
- "constant_time_eq",
- "cpufeatures 0.2.17",
-]
-
-[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -193,18 +217,6 @@ name = "byteorder"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
-
-[[package]]
-name = "cc"
-version = "1.2.56"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aebf35691d1bfb0ac386a69bac2fde4dd276fb618cf8bf4f5318fe285e821bb2"
-dependencies = [
- "find-msvc-tools",
- "jobserver",
- "libc",
- "shlex",
-]
 
 [[package]]
 name = "cexpr"
@@ -248,14 +260,14 @@ version = "0.1.0"
 dependencies = [
  "aes",
  "anyhow",
- "crypto-bigint 0.6.1",
+ "clap",
+ "crypto-bigint",
  "curve25519-dalek",
  "eyre",
  "ff 0.12.0",
  "fourq",
  "generic-array 1.3.5",
  "lambdaworks-math",
- "mac-n-cheese-vole",
  "num-traits",
  "p256",
  "psi-aes",
@@ -263,10 +275,9 @@ dependencies = [
  "rand 0.8.5",
  "rand_core 0.10.0",
  "rayon",
+ "scuttlebutt",
  "serde",
  "subtle",
- "swanky-aes-rng",
- "swanky-channel-legacy",
  "swanky-field",
  "swanky-field-binary",
  "swanky-party",
@@ -285,16 +296,56 @@ dependencies = [
 ]
 
 [[package]]
+name = "clap"
+version = "4.5.60"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2797f34da339ce31042b27d23607e051786132987f595b02ba4f6a6dffb7030a"
+dependencies = [
+ "clap_builder",
+ "clap_derive",
+]
+
+[[package]]
+name = "clap_builder"
+version = "4.5.60"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "24a241312cea5059b13574bb9b3861cabf758b879c15190b37b6d6fd63ab6876"
+dependencies = [
+ "anstream",
+ "anstyle",
+ "clap_lex",
+ "strsim",
+]
+
+[[package]]
+name = "clap_derive"
+version = "4.5.55"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a92793da1a46a5f2a02a6f4c46c6496b28c43638adea8306fcb0caa1634f24e5"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
+]
+
+[[package]]
+name = "clap_lex"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
+
+[[package]]
+name = "colorchoice"
+version = "1.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
+
+[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
-
-[[package]]
-name = "constant_time_eq"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
 name = "cpufeatures"
@@ -334,15 +385,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crossbeam-queue"
-version = "0.3.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f58bbc28f91df819d0aa2a2c00cd19754769c2fad90579b3592b1c9ba7a3115"
-dependencies = [
- "crossbeam-utils",
-]
-
-[[package]]
 name = "crossbeam-utils"
 version = "0.8.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -358,18 +400,6 @@ dependencies = [
  "rand_core 0.6.4",
  "subtle",
  "zeroize",
-]
-
-[[package]]
-name = "crypto-bigint"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96272c2ff28b807e09250b180ad1fb7889a3258f7455759b5c3c58b719467130"
-dependencies = [
- "hybrid-array",
- "num-traits",
- "rand_core 0.6.4",
- "subtle",
 ]
 
 [[package]]
@@ -459,7 +489,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5e6043086bf7973472e0c7dff2142ea0b680d30e18d9cc40f267efbf222bd47"
 dependencies = [
  "base16ct",
- "crypto-bigint 0.5.5",
+ "crypto-bigint",
  "digest",
  "ff 0.13.1",
  "generic-array 0.14.7",
@@ -507,22 +537,11 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 [[package]]
 name = "ff"
 version = "0.12.0"
+source = "git+https://github.com/GaloisInc/ff?rev=1a4c6138e2e76e13f8d54fae81857e2cea3cbc4d#1a4c6138e2e76e13f8d54fae81857e2cea3cbc4d"
 dependencies = [
  "bitvec",
  "byteorder",
- "ff_derive 0.12.0",
- "rand_core 0.6.4",
- "subtle",
-]
-
-[[package]]
-name = "ff"
-version = "0.12.0"
-source = "git+https://github.com/GaloisInc/ff?rev=c29da06f50c67fe9e7361c26f61ac831915244f8#c29da06f50c67fe9e7361c26f61ac831915244f8"
-dependencies = [
- "bitvec",
- "byteorder",
- "ff_derive 0.12.0 (git+https://github.com/GaloisInc/ff?rev=c29da06f50c67fe9e7361c26f61ac831915244f8)",
+ "ff_derive",
  "rand_core 0.6.4",
  "subtle",
 ]
@@ -540,21 +559,7 @@ dependencies = [
 [[package]]
 name = "ff_codegen"
 version = "0.12.0"
-dependencies = [
- "addchain",
- "cfg-if",
- "num-bigint 0.3.3",
- "num-integer",
- "num-traits",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "ff_codegen"
-version = "0.12.0"
-source = "git+https://github.com/GaloisInc/ff?rev=c29da06f50c67fe9e7361c26f61ac831915244f8#c29da06f50c67fe9e7361c26f61ac831915244f8"
+source = "git+https://github.com/GaloisInc/ff?rev=1a4c6138e2e76e13f8d54fae81857e2cea3cbc4d#1a4c6138e2e76e13f8d54fae81857e2cea3cbc4d"
 dependencies = [
  "addchain",
  "cfg-if",
@@ -569,19 +574,9 @@ dependencies = [
 [[package]]
 name = "ff_derive"
 version = "0.12.0"
+source = "git+https://github.com/GaloisInc/ff?rev=1a4c6138e2e76e13f8d54fae81857e2cea3cbc4d#1a4c6138e2e76e13f8d54fae81857e2cea3cbc4d"
 dependencies = [
- "ff_codegen 0.12.0",
- "num-bigint 0.3.3",
- "proc-macro2",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "ff_derive"
-version = "0.12.0"
-source = "git+https://github.com/GaloisInc/ff?rev=c29da06f50c67fe9e7361c26f61ac831915244f8#c29da06f50c67fe9e7361c26f61ac831915244f8"
-dependencies = [
- "ff_codegen 0.12.0 (git+https://github.com/GaloisInc/ff?rev=c29da06f50c67fe9e7361c26f61ac831915244f8)",
+ "ff_codegen",
  "num-bigint 0.3.3",
  "proc-macro2",
  "syn 1.0.109",
@@ -592,12 +587,6 @@ name = "fiat-crypto"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
-
-[[package]]
-name = "find-msvc-tools"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "foldhash"
@@ -640,7 +629,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eaf57c49a95fd1fe24b90b3033bee6dc7e8f1288d51494cb44e627c295e38542"
 dependencies = [
  "rustversion",
- "serde_core",
  "typenum",
 ]
 
@@ -655,18 +643,6 @@ dependencies = [
  "libc",
  "wasi",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "getrandom"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
-dependencies = [
- "cfg-if",
- "libc",
- "r-efi",
- "wasip2",
 ]
 
 [[package]]
@@ -746,15 +722,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hybrid-array"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2d35805454dc9f8662a98d6d61886ffe26bd465f5960e0e55345c70d5c0d2a9"
-dependencies = [
- "typenum",
-]
-
-[[package]]
 name = "id-arena"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -788,6 +755,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "is_terminal_polyfill"
+version = "1.70.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
+
+[[package]]
 name = "itertools"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -803,16 +776,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
 
 [[package]]
-name = "jobserver"
-version = "0.1.34"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9afb3de4395d6b3e67a780b6de64b51c978ecf11cb9a462c66be7d4ca9039d33"
-dependencies = [
- "getrandom 0.3.4",
- "libc",
-]
-
-[[package]]
 name = "js-sys"
 version = "0.3.85"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -820,14 +783,6 @@ checksum = "8c942ebf8e95485ca0d52d97da7c5a2c387d0e7f0ba4c35e93bfcaee045955b3"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "keyed_arena"
-version = "0.6.0"
-dependencies = [
- "bumpalo",
- "crossbeam-queue",
 ]
 
 [[package]]
@@ -896,32 +851,6 @@ name = "log"
 version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
-
-[[package]]
-name = "mac-n-cheese-vole"
-version = "0.6.0"
-dependencies = [
- "arrayvec",
- "blake3",
- "bytemuck",
- "eyre",
- "generic-array 1.3.5",
- "keyed_arena",
- "rand 0.8.5",
- "swanky-aes-rng",
- "swanky-block",
- "swanky-channel-legacy",
- "swanky-cointoss",
- "swanky-field",
- "swanky-field-binary",
- "swanky-field-f61p",
- "swanky-field-ff-primes",
- "swanky-ot-alsz-kos",
- "swanky-party",
- "swanky-serialization",
- "swanky-svole-wykw",
- "vectoreyes",
-]
 
 [[package]]
 name = "matrixmultiply"
@@ -1033,6 +962,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 
 [[package]]
+name = "once_cell_polyfill"
+version = "1.70.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
+
+[[package]]
 name = "p256"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1068,12 +1003,6 @@ dependencies = [
  "der",
  "spki",
 ]
-
-[[package]]
-name = "pkg-config"
-version = "0.3.32"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 
 [[package]]
 name = "ppv-lite86"
@@ -1119,16 +1048,6 @@ dependencies = [
  "aes",
  "rand 0.8.5",
  "sha2",
-]
-
-[[package]]
-name = "quick-xml"
-version = "0.39.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "958f21e8e7ceb5a1aa7fa87fab28e7c75976e0bfe7e23ff069e0a260f894067d"
-dependencies = [
- "memchr",
- "serde",
 ]
 
 [[package]]
@@ -1312,6 +1231,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
+name = "scuttlebutt"
+version = "0.6.0"
+dependencies = [
+ "bytemuck",
+ "curve25519-dalek",
+ "generic-array 1.3.5",
+ "num-traits",
+ "rand 0.8.5",
+ "rand_chacha",
+ "rand_core 0.6.4",
+ "serde",
+ "sha2",
+ "smallvec",
+ "subtle",
+ "swanky-channel",
+ "swanky-field",
+ "swanky-field-binary",
+ "swanky-field-f61p",
+ "swanky-field-ff-primes",
+ "swanky-field-fft",
+ "swanky-serialization",
+ "vectoreyes",
+]
+
+[[package]]
 name = "sec1"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1402,6 +1346,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "smallvec"
+version = "1.15.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+
+[[package]]
 name = "spki"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1412,103 +1362,31 @@ dependencies = [
 ]
 
 [[package]]
-name = "subtle"
-version = "2.6.1"
+name = "strsim"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
-name = "swanky-adversary"
-version = "0.6.0"
-
-[[package]]
-name = "swanky-aes-hash"
-version = "0.6.0"
-dependencies = [
- "vectoreyes",
-]
-
-[[package]]
-name = "swanky-aes-rng"
-version = "0.6.0"
-dependencies = [
- "bytemuck",
- "rand 0.8.5",
- "rand_core 0.6.4",
- "vectoreyes",
-]
-
-[[package]]
-name = "swanky-bit-matrix-transpose"
-version = "0.6.0"
-dependencies = [
- "cc",
-]
-
-[[package]]
-name = "swanky-block"
-version = "0.6.0"
-dependencies = [
- "bytemuck",
- "rand 0.8.5",
- "serde",
- "vectoreyes",
-]
-
-[[package]]
-name = "swanky-bytearray-utils"
-version = "0.6.0"
-dependencies = [
- "rand 0.8.5",
-]
+name = "subtle"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81cdd64d312baedb58e21336b31bc043b77e01cc99033ce76ef539f78e965ebc"
 
 [[package]]
 name = "swanky-channel"
 version = "0.6.0"
 dependencies = [
- "bytemuck",
  "eyre",
  "generic-array 1.3.5",
- "swanky-party",
- "swanky-party2",
  "swanky-serialization",
-]
-
-[[package]]
-name = "swanky-channel-legacy"
-version = "0.6.0"
-dependencies = [
- "curve25519-dalek",
- "generic-array 1.3.5",
- "sha2",
- "swanky-block",
- "swanky-channel",
- "swanky-serialization",
-]
-
-[[package]]
-name = "swanky-cointoss"
-version = "0.6.0"
-dependencies = [
- "rand 0.8.5",
- "rand_core 0.6.4",
- "swanky-aes-rng",
- "swanky-block",
- "swanky-channel-legacy",
-]
-
-[[package]]
-name = "swanky-deprecated-bitwise-utils"
-version = "0.6.0"
-dependencies = [
- "swanky-block",
 ]
 
 [[package]]
 name = "swanky-field"
 version = "0.6.0"
 dependencies = [
- "crypto-bigint 0.6.1",
+ "crypto-bigint",
  "generic-array 1.3.5",
  "num-traits",
  "rand 0.8.5",
@@ -1521,7 +1399,7 @@ name = "swanky-field-binary"
 version = "0.6.0"
 dependencies = [
  "bytemuck",
- "crypto-bigint 0.6.1",
+ "crypto-bigint",
  "generic-array 1.3.5",
  "rand 0.8.5",
  "subtle",
@@ -1535,7 +1413,7 @@ name = "swanky-field-f61p"
 version = "0.6.0"
 dependencies = [
  "bytemuck",
- "crypto-bigint 0.6.1",
+ "crypto-bigint",
  "generic-array 1.3.5",
  "rand 0.8.5",
  "subtle",
@@ -1548,9 +1426,9 @@ name = "swanky-field-ff-primes"
 version = "0.6.0"
 dependencies = [
  "bytemuck",
- "crypto-bigint 0.6.1",
- "ff 0.12.0 (git+https://github.com/GaloisInc/ff?rev=c29da06f50c67fe9e7361c26f61ac831915244f8)",
- "ff_codegen 0.12.0 (git+https://github.com/GaloisInc/ff?rev=c29da06f50c67fe9e7361c26f61ac831915244f8)",
+ "crypto-bigint",
+ "ff 0.12.0",
+ "ff_codegen",
  "generic-array 1.3.5",
  "ndarray",
  "num-bigint 0.4.6",
@@ -1575,67 +1453,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "swanky-ocelot-error"
-version = "0.6.0"
-dependencies = [
- "swanky-cointoss",
-]
-
-[[package]]
-name = "swanky-ot-alsz-kos"
-version = "0.6.0"
-dependencies = [
- "blake3",
- "bytemuck",
- "keyed_arena",
- "rand 0.8.5",
- "swanky-adversary",
- "swanky-aes-hash",
- "swanky-aes-rng",
- "swanky-bit-matrix-transpose",
- "swanky-block",
- "swanky-bytearray-utils",
- "swanky-channel-legacy",
- "swanky-cointoss",
- "swanky-deprecated-bitwise-utils",
- "swanky-ocelot-error",
- "swanky-ot-chou-orlandi",
- "swanky-ot-traits",
- "vectoreyes",
-]
-
-[[package]]
-name = "swanky-ot-chou-orlandi"
-version = "0.6.0"
-dependencies = [
- "blake3",
- "curve25519-dalek",
- "rand 0.8.5",
- "swanky-adversary",
- "swanky-block",
- "swanky-channel-legacy",
- "swanky-ocelot-error",
- "swanky-ot-traits",
-]
-
-[[package]]
-name = "swanky-ot-traits"
-version = "0.6.0"
-dependencies = [
- "rand 0.8.5",
- "swanky-channel-legacy",
- "swanky-ocelot-error",
-]
-
-[[package]]
 name = "swanky-party"
-version = "0.6.0"
-dependencies = [
- "bytemuck",
-]
-
-[[package]]
-name = "swanky-party2"
 version = "0.6.0"
 dependencies = [
  "bytemuck",
@@ -1648,28 +1466,6 @@ dependencies = [
  "bytemuck",
  "generic-array 1.3.5",
  "serde",
- "vectoreyes",
-]
-
-[[package]]
-name = "swanky-svole-wykw"
-version = "0.6.0"
-dependencies = [
- "blake3",
- "bytemuck",
- "generic-array 1.3.5",
- "rand 0.8.5",
- "subtle",
- "swanky-adversary",
- "swanky-aes-rng",
- "swanky-block",
- "swanky-bytearray-utils",
- "swanky-channel-legacy",
- "swanky-cointoss",
- "swanky-field",
- "swanky-ocelot-error",
- "swanky-ot-alsz-kos",
- "swanky-ot-traits",
  "vectoreyes",
 ]
 
@@ -1733,22 +1529,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 
 [[package]]
+name = "utf8parse"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
+
+[[package]]
 name = "vectoreyes"
 version = "0.6.0"
 dependencies = [
  "aes",
  "bytemuck",
+ "lazy_static",
  "num-traits",
- "prettyplease",
- "proc-macro2",
- "quick-xml",
- "quote",
- "rand 0.8.5",
  "serde",
- "serde_json",
  "subtle",
- "syn 2.0.114",
- "zstd",
 ]
 
 [[package]]
@@ -2088,31 +1883,3 @@ name = "zmij"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4de98dfa5d5b7fef4ee834d0073d560c9ca7b6c46a71d058c48db7960f8cfaf7"
-
-[[package]]
-name = "zstd"
-version = "0.13.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a"
-dependencies = [
- "zstd-safe",
-]
-
-[[package]]
-name = "zstd-safe"
-version = "7.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f49c4d5f0abb602a93fb8736af2a4f4dd9512e36f7f570d66e65ff867ed3b9d"
-dependencies = [
- "zstd-sys",
-]
-
-[[package]]
-name = "zstd-sys"
-version = "2.0.16+zstd.1.5.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91e19ebc2adc8f83e43039e79776e3fda8ca919132d68a1fed6a5faca2683748"
-dependencies = [
- "cc",
- "pkg-config",
-]

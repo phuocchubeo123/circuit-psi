@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use circuit_psi::comm_util::{receive_fe, receive_u8, send_fe, send_u8};
 use circuit_psi::cope::Cope;
-use circuit_psi::network::tcp_channel::{SwankyTcpChannel, connect_swanky_with_retry, listen_swanky};
+use circuit_psi::network::tcp_channel::{SwankyChannel, connect_with_retry, listen_to};
 use circuit_psi::scalar_field::{FOURQ_SCALAR_BITS, FourQScalarField as FE, random_fourq_elements_from_prg};
 use psi_aes::prg::PRG;
 use std::time::Instant;
@@ -29,14 +29,14 @@ fn random_fe_vec(n: usize) -> Vec<FE> {
     out
 }
 
-fn print_stats(role: &str, channel: &SwankyTcpChannel, comm: u64) {
+fn print_stats(role: &str, channel: &SwankyChannel, comm: u64) {
     println!("{role}: counted protocol bytes (comm): {comm}");
     println!("{role}: channel bytes sent: {}", channel.bytes_sent());
     println!("{role}: channel bytes received: {}", channel.bytes_received());
 }
 
 fn run_sender(n: usize, addr: &str) -> Result<()> {
-    let mut channel = connect_swanky_with_retry(addr)
+    let mut channel = connect_with_retry(addr)
         .with_context(|| format!("failed to connect to {addr}"))?;
     let mut comm = 0u64;
 
@@ -85,7 +85,7 @@ fn run_sender(n: usize, addr: &str) -> Result<()> {
 }
 
 fn run_receiver(n: usize, addr: &str) -> Result<()> {
-    let mut channel = listen_swanky(addr).with_context(|| format!("failed to listen on {addr}"))?;
+    let mut channel = listen_to(addr).with_context(|| format!("failed to listen on {addr}"))?;
     let mut comm = 0u64;
 
     let init_start = Instant::now();

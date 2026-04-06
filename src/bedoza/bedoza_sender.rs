@@ -1,6 +1,6 @@
 use crate::{
     bedoza::{comm_util::send_fe_vec, defines::FE},
-    tcp_channel::TcpChannel,
+    tcp_channel::SwankyChannel,
 };
 use anyhow::{Result, anyhow, ensure};
 use std::ops::{Add, Mul, Sub};
@@ -33,7 +33,7 @@ impl BeDOZaSender {
 pub fn share_values_sender(
     vals: &[FE],
     prepared_bedoza_senders: &[BeDOZaSender],
-    channel: &mut TcpChannel,
+    channel: &mut SwankyChannel,
 ) -> Result<Vec<BeDOZaSender>> {
     ensure!(
         vals.len() == prepared_bedoza_senders.len(),
@@ -61,7 +61,7 @@ pub fn share_values_sender(
     Ok(bedoza_shared_senders)
 }
 
-pub fn send_open_shares(bedoza_senders: &[BeDOZaSender], channel: &mut TcpChannel) -> Result<()> {
+pub fn send_open_shares(bedoza_senders: &[BeDOZaSender], channel: &mut SwankyChannel) -> Result<()> {
     let vals: Vec<FE> = bedoza_senders
         .iter()
         .map(|bedoza_sender| bedoza_sender.val())

@@ -1,7 +1,8 @@
-use crate::{bedoza::defines::FE, tcp_channel::TcpChannel};
+use crate::bedoza::defines::FE;
 use anyhow::{Result, anyhow};
 use fourq::point::Point;
 use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
+use swanky_channel_legacy::AbstractChannel;
 
 pub type CurvePoint = Point;
 const GROUP_POINT_BYTES: usize = 32;
@@ -271,41 +272,31 @@ impl Neg for Group {
     }
 }
 
-pub fn send_group_elements(elements: &[Group], channel: &mut TcpChannel) -> Result<()> {
-    let mut buf = Vec::with_capacity(elements.len() * GROUP_POINT_BYTES + 8);
-    buf.extend(elements.len().to_le_bytes());
+pub fn send_group_elements<C: AbstractChannel>(elements: &[Group], channel: &mut C) -> Result<()> {
+    let count = u64::try_from(elements.len())
+        .map_err(|_| anyhow!("too many group elements: {}", elements.len()))?;
+    channel.write_bytes(&count.to_le_bytes())?;
     for elem in elements {
         let encoded = encode_affine(elem.affine);
-        buf.extend_from_slice(&encoded);
+        channel.write_bytes(&encoded)?;
     }
-    channel.send(&buf)?;
+    channel.flush()?;
     Ok(())
 }
 
-pub fn receive_group_elements(channel: &mut TcpChannel) -> Result<Vec<Group>> {
-    let buf = channel.receive()?;
-    if buf.len() < 8 {
-        return Err(anyhow!(
-            "Received data too short to contain element count: expected at least 8 bytes, got {} bytes",
-            buf.len()
-        ));
-    }
-    let count = usize::from_le_bytes(buf[0..8].try_into().unwrap());
-
-    if buf.len() != count * GROUP_POINT_BYTES + 8 {
-        return Err(anyhow!(
-            "Expected {} bytes, got {} bytes",
-            count * GROUP_POINT_BYTES + 8,
-            buf.len()
-        ));
-    }
+pub fn receive_group_elements<C: AbstractChannel>(channel: &mut C) -> Result<Vec<Group>> {
+    let mut count_bytes = [0u8; 8];
+    channel.read_bytes(&mut count_bytes)?;
+    let count = u64::from_le_bytes(count_bytes) as usize;
+    let mut payload = vec![0u8; count * GROUP_POINT_BYTES];
+    channel.read_bytes(&mut payload)?;
 
     let mut elements = Vec::with_capacity(count);
     for i in 0..count {
-        let start = 8 + i * GROUP_POINT_BYTES;
+        let start = i * GROUP_POINT_BYTES;
         let end = start + GROUP_POINT_BYTES;
         let mut affine = PointAffine::default();
-        let status = unsafe { decode(buf[start..end].as_ptr(), &mut affine) };
+        let status = unsafe { decode(payload[start..end].as_ptr(), &mut affine) };
         if status != ECCRYPTO_SUCCESS {
             return Err(anyhow!(
                 "Failed to decode FourQ point at index {} with status {}",

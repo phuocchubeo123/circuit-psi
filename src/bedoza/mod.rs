@@ -12,7 +12,7 @@ use crate::{
         comm_util::{receive_fe_vec, send_fe_vec},
         defines::FE,
     },
-    tcp_channel::TcpChannel,
+    tcp_channel::SwankyChannel,
 };
 use anyhow::{Result, anyhow, ensure};
 use std::ops::{Add, Mul, Sub};
@@ -47,7 +47,7 @@ pub type BeDOZaTriple = (BeDOZa, BeDOZa, BeDOZa);
 pub fn share_values(
     vals: &[FE],
     prepared_bedoza_shares: &[BeDOZa],
-    channel: &mut TcpChannel,
+    channel: &mut SwankyChannel,
 ) -> Result<Vec<BeDOZa>> {
     ensure!(
         vals.len() == prepared_bedoza_shares.len(),
@@ -101,7 +101,7 @@ pub fn share_values(
 
 pub fn receive_share_values(
     prepared_bedoza_shares: &[BeDOZa],
-    channel: &mut TcpChannel,
+    channel: &mut SwankyChannel,
 ) -> Result<Vec<BeDOZa>> {
     let prepared_bedoza_receivers = prepared_bedoza_shares
         .iter()
@@ -135,7 +135,7 @@ pub fn receive_share_values(
     Ok(bedoza_shared)
 }
 
-pub fn open_values_send(bedoza_shares: &[BeDOZa], channel: &mut TcpChannel) -> Result<()> {
+pub fn open_values_send(bedoza_shares: &[BeDOZa], channel: &mut SwankyChannel) -> Result<()> {
     let bedoza_senders: Vec<BeDOZaSender> = bedoza_shares
         .iter()
         .map(|share| *share.bedoza_sender())
@@ -146,7 +146,7 @@ pub fn open_values_send(bedoza_shares: &[BeDOZa], channel: &mut TcpChannel) -> R
     Ok(())
 }
 
-pub fn open_values_receive(bedoza_shares: &[BeDOZa], channel: &mut TcpChannel) -> Result<Vec<FE>> {
+pub fn open_values_receive(bedoza_shares: &[BeDOZa], channel: &mut SwankyChannel) -> Result<Vec<FE>> {
     let bedoza_receivers: Vec<BeDOZaReceiver> = bedoza_shares
         .iter()
         .map(|share| *share.bedoza_receiver())
@@ -167,7 +167,7 @@ pub fn batch_multiply(
     x_shares: &[BeDOZa],
     y_shares: &[BeDOZa],
     triple_shares: &[BeDOZaTriple],
-    channel: &mut TcpChannel,
+    channel: &mut SwankyChannel,
 ) -> Result<Vec<BeDOZa>> {
     ensure!(
         x_shares.len() == y_shares.len(),
@@ -306,7 +306,7 @@ pub fn send_batch_multiply_openings(
     x_shares: &[BeDOZa],
     y_shares: &[BeDOZa],
     triple_shares: &[BeDOZaTriple],
-    channel: &mut TcpChannel,
+    channel: &mut SwankyChannel,
 ) -> Result<()> {
     let (d_shares, e_shares) = multiplication_opening_shares(x_shares, y_shares, triple_shares)?;
     open_values_send(&d_shares, channel)
@@ -320,7 +320,7 @@ pub fn batch_multiply_interactive(
     x_shares: &[BeDOZa],
     y_shares: &[BeDOZa],
     triple_shares: &[BeDOZaTriple],
-    channel: &mut TcpChannel,
+    channel: &mut SwankyChannel,
 ) -> Result<Vec<BeDOZa>> {
     send_batch_multiply_openings(x_shares, y_shares, triple_shares, channel)?;
     batch_multiply(x_shares, y_shares, triple_shares, channel)
@@ -329,7 +329,7 @@ pub fn batch_multiply_interactive(
 pub fn take_vec_prod(
     shares: &[BeDOZa],
     triple_shares: &[BeDOZaTriple],
-    channel: &mut TcpChannel,
+    channel: &mut SwankyChannel,
 ) -> Result<BeDOZa> {
     ensure!(
         !shares.is_empty(),
@@ -401,7 +401,7 @@ pub fn take_vec_prod(
 pub fn take_vec_prod_interactive(
     shares: &[BeDOZa],
     triple_shares: &[BeDOZaTriple],
-    channel: &mut TcpChannel,
+    channel: &mut SwankyChannel,
 ) -> Result<BeDOZa> {
     ensure!(
         !shares.is_empty(),

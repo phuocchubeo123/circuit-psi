@@ -2,12 +2,10 @@ extern crate psi_ot;
 extern crate psi_network;
 extern crate rand;
 
-use psi_network::tcp_channel::TcpChannel;
+use psi_network::tcp_channel::{connect_with_retry, listen_to};
 use psi_ot::base_cot::BaseCot;
 use psi_ot::pre_ot::OTPre;
-use std::net::TcpStream;
 use std::env;
-use std::net::TcpListener;
 use std::time::Instant;
 
 fn main() {
@@ -16,10 +14,8 @@ fn main() {
 
     if role == "receiver" {
         // Listen for the sender
-        let listener = TcpListener::bind("127.0.0.1:8080").expect("Failed to bind to address");
         println!("Waiting for sender...");
-        let (stream, _) = listener.accept().expect("Failed to accept connection");
-        let mut channel = TcpChannel::new(stream);
+        let mut channel = listen_to("127.0.0.1:8080").expect("Failed to bind/listen");
 
         // Initialize BaseCot for the receiver (BOB)
         let mut receiver_cot = BaseCot::new(1, false);
@@ -60,8 +56,8 @@ fn main() {
         println!("Total data received: {} bytes", channel.get_bytes_received());
     } else if role == "sender" {
         // Connect to the receiver
-        let stream = TcpStream::connect("127.0.0.1:8080").expect("Failed to connect to receiver");
-        let mut channel = TcpChannel::new(stream);
+        let mut channel = connect_with_retry("127.0.0.1:8080")
+            .expect("Failed to connect to receiver");
 
         // Initialize BaseCot for the sender (ALICE)
         let mut sender_cot = BaseCot::new(0, false);

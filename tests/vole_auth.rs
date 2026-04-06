@@ -1,47 +1,38 @@
 use circuit_psi::{
+    bedoza::{bedoza_receiver::BeDOZaReceiver, bedoza_sender::BeDOZaSender},
     bedoza::vole_auth::{
-        FourQVoleMac, authenticate_batch_with_peer_key_receiver,
+        authenticate_batch_with_peer_key_receiver,
         authenticate_batch_with_peer_key_sender,
     },
     scalar_field::{FourQScalarField, fq},
-    tcp_channel::swanky_channel_from_tcp_stream,
+    tcp_channel::{connect_with_retry, listen_to},
+    vole_triple::LPN21,
     vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
 };
 use eyre::WrapErr;
-use mac_n_cheese_vole::{mac::Mac, vole::VoleSizes};
+use circuit_psi::mac_n_cheese_vole::vole::VoleSizes;
 use std::{
-    net::{TcpListener, TcpStream},
+    net::TcpListener,
     thread,
 };
-use swanky_aes_rng::AesRng;
-use swanky_party::{IS_PROVER, IS_VERIFIER, Prover, Verifier};
+use swanky_channel_legacy::AesRng;
 
 fn make_base_voles(
     key: FourQScalarField,
     count: usize,
 ) -> (
-    Vec<Mac<Prover, FourQVoleMac>>,
-    Vec<Mac<Verifier, FourQVoleMac>>,
+    Vec<BeDOZaSender>,
+    Vec<BeDOZaReceiver>,
 ) {
     let mut sender = Vec::with_capacity(count);
     let mut receiver = Vec::with_capacity(count);
     for i in 0..count {
         let x = fq((i as u64) + 1);
         let beta = fq((i as u64) * 5 + 3);
-        sender.push(Mac::prover_new(IS_PROVER, x, beta));
-        receiver.push(Mac::verifier_new(IS_VERIFIER, x * key + beta));
+        sender.push(BeDOZaSender::new(x, beta, false));
+        receiver.push(BeDOZaReceiver::new(x * key + beta, key, false));
     }
     (sender, receiver)
-}
-
-fn connect_with_retry(addr: std::net::SocketAddr) -> eyre::Result<TcpStream> {
-    for _ in 0..200 {
-        if let Ok(stream) = TcpStream::connect(addr) {
-            return Ok(stream);
-        }
-        thread::sleep(std::time::Duration::from_millis(5));
-    }
-    eyre::bail!("failed to connect to {addr}");
 }
 
 #[test]
@@ -52,19 +43,22 @@ fn vole_authenticates_sender_batch_under_receiver_key() -> eyre::Result<()> {
     let input_values: Vec<FourQScalarField> = (0..4096).map(|i| fq((i as u64) + 500)).collect();
 
     let sizes = VoleSizes::of::<FourQScalarField, FourQScalarField>();
-    let (base_sender, base_receiver) = make_base_voles(receiver_key, sizes.base_voles_needed);
+    let (_base_sender, _base_receiver) = make_base_voles(receiver_key, sizes.base_voles_needed);
 
     let listener = TcpListener::bind("127.0.0.1:0").wrap_err("bind localhost listener")?;
-    let addr = listener.local_addr().wrap_err("read listener address")?;
+    let addr_str = listener
+        .local_addr()
+        .wrap_err("read listener address")?
+        .to_string();
+    drop(listener);
     let n = input_values.len();
 
+    let sender_addr = addr_str.clone();
     let sender_handle = thread::spawn(move || -> eyre::Result<_> {
-        let (socket, _) = listener.accept().wrap_err("sender accept")?;
-        let mut channel =
-            swanky_channel_from_tcp_stream(socket).map_err(|e| eyre::eyre!("{}", e))?;
+        let mut channel = listen_to(&sender_addr).map_err(|e| eyre::eyre!("{e}"))?;
         let mut rng = AesRng::new();
         let mut vole =
-            BufferedVoleSender::<FourQVoleMac>::init(&mut channel, &mut rng, base_sender)
+            BufferedVoleSender::init(&mut channel, LPN21)
                 .wrap_err("init sender vole")?;
         let _added = vole
             .extend_random(&mut channel, &mut rng, n)
@@ -73,11 +67,10 @@ fn vole_authenticates_sender_batch_under_receiver_key() -> eyre::Result<()> {
             .map_err(|e| eyre::eyre!("sender authenticate batch: {e}"))
     });
 
-    let socket = connect_with_retry(addr)?;
-    let mut channel = swanky_channel_from_tcp_stream(socket).map_err(|e| eyre::eyre!("{}", e))?;
+    let mut channel = connect_with_retry(&addr_str).map_err(|e| eyre::eyre!("{e}"))?;
     let mut rng = AesRng::new();
     let mut vole =
-        BufferedVoleReceiver::<FourQVoleMac>::init(&mut channel, &mut rng, delta, base_receiver)
+        BufferedVoleReceiver::init(&mut channel, delta, LPN21)
             .wrap_err("init receiver vole")?;
     let _added = vole
         .extend_random(&mut channel, &mut rng, n)

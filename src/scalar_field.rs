@@ -1,7 +1,9 @@
 use ff::{Field as _, PrimeField};
 use std::hash::{Hash, Hasher};
 use subtle::{Choice, CtOption};
-use swanky_field::{FiniteField, FiniteRing, PrimeFiniteField as SwankyPrimeFiniteField};
+use swanky_field::{
+    FiniteField, FiniteRing, PrimeFiniteField as SwankyPrimeFiniteField, polynomial::Polynomial,
+};
 use swanky_serialization::{BiggerThanModulus, CanonicalSerialize};
 
 #[derive(PrimeField, serde::Serialize, serde::Deserialize)]
@@ -142,6 +144,10 @@ impl FiniteField for FourQScalarField {
     const GENERATOR: Self = <Self as ff::PrimeField>::MULTIPLICATIVE_GENERATOR;
     type NumberOfBitsInBitDecomposition = generic_array::typenum::U246;
 
+    fn polynomial_modulus() -> Polynomial<Self::PrimeField> {
+        Polynomial::x()
+    }
+
     fn bit_decomposition(
         &self,
     ) -> generic_array::GenericArray<bool, Self::NumberOfBitsInBitDecomposition> {
@@ -180,7 +186,7 @@ impl SwankyPrimeFiniteField for FourQScalarField {
         crypto_bigint::Uint::from_words(words)
     }
 
-    fn as_int<const LIMBS: usize>(&self) -> crypto_bigint::Uint<LIMBS> {
+    fn into_int<const LIMBS: usize>(&self) -> crypto_bigint::Uint<LIMBS> {
         assert!(LIMBS >= Self::MIN_LIMBS_NEEDED);
         let repr = self.to_repr();
         let mut words = [0 as crypto_bigint::Word; LIMBS];
@@ -229,9 +235,12 @@ impl FourQScalarField {
     }
 
     pub fn inv(&self) -> Result<Self, &'static str> {
-        self.invert()
-            .into_option()
-            .ok_or("cannot invert zero in FourQ scalar field")
+        let inv = self.invert();
+        if bool::from(inv.is_some()) {
+            Ok(inv.unwrap())
+        } else {
+            Err("cannot invert zero in FourQ scalar field")
+        }
     }
 
     pub fn to_bytes_le(&self) -> [u8; 32] {

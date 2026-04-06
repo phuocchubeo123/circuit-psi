@@ -3,9 +3,8 @@ extern crate psi_network;
 extern crate rand;
 
 use psi_ot::iknp::IKNP;
-use psi_network::tcp_channel::TcpChannel;
+use psi_network::tcp_channel::{connect_with_retry, listen_to};
 use std::env;
-use std::net::{TcpListener, TcpStream};
 use rand::Rng;
 
 fn main() {
@@ -16,9 +15,7 @@ fn main() {
     if role == "receiver" {
         // Receiver logic
         // Bind and wait for a connection from the sender
-        let listener = TcpListener::bind("127.0.0.1:12345").expect("Failed to bind to address");
-        let (stream, _) = listener.accept().expect("Failed to accept connection");
-        let mut io = TcpChannel::new(stream);
+        let mut io = listen_to("127.0.0.1:12345").expect("Failed to bind/listen on receiver");
 
         let mut receiver_iknp = IKNP::new(true);
         receiver_iknp.setup_recv(&mut io, None, None);
@@ -40,8 +37,8 @@ fn main() {
     } else if role == "sender" {
         // Sender logic
         // Establish connection to the receiver
-        let stream = TcpStream::connect("127.0.0.1:12345").expect("Failed to connect to receiver");
-        let mut io = TcpChannel::new(stream);
+        let mut io =
+            connect_with_retry("127.0.0.1:12345").expect("Failed to connect to receiver");
 
         let mut sender_iknp = IKNP::new(true);
 

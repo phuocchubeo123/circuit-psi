@@ -5,8 +5,8 @@ use crate::{
         bedoza_sender::BeDOZaSender,
         defines::{FE, random_fe_vec_from_rng},
         vole_auth::{
-            FourQVoleMac, authenticate_batch_with_peer_key_receiver,
-            authenticate_batch_with_peer_key_sender, vole_share_product_receiver,
+            authenticate_batch_with_peer_key_receiver, authenticate_batch_with_peer_key_sender,
+            vole_share_product_receiver,
         },
         wolverine::{
             wolverine_batch_mul_prove, wolverine_batch_mul_public_output_prove,
@@ -14,7 +14,6 @@ use crate::{
         },
     },
     group::{Group, msm_pippenger, receive_group_elements, send_group_elements},
-    tcp_channel::TcpChannel,
     vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
 };
 use anyhow::{Result, anyhow, ensure};
@@ -232,8 +231,8 @@ impl Shuffler {
     pub fn step0_sample_and_authenticate_oprf_key_share<C: AbstractChannel, RNG: Rng>(
         &self,
         rng: &mut RNG,
-        vole_sender: &mut BufferedVoleSender<FourQVoleMac>,
-        vole_receiver: &mut BufferedVoleReceiver<FourQVoleMac>,
+        vole_sender: &mut BufferedVoleSender,
+        vole_receiver: &mut BufferedVoleReceiver,
         channel: &mut C,
     ) -> Result<(FE, BeDOZa)> {
         // Shuffler first receives inputer's k0 authenticated under delta_1, then samples k1
@@ -260,7 +259,7 @@ impl Shuffler {
     pub fn step1_inputer_commits_inputs<C: AbstractChannel>(
         &self,
         expected_count: usize,
-        vole_receiver: &mut BufferedVoleReceiver<FourQVoleMac>,
+        vole_receiver: &mut BufferedVoleReceiver,
         channel: &mut C,
     ) -> Result<Vec<BeDOZaReceiver>> {
         let receiver_commitments = authenticate_batch_with_peer_key_receiver(
@@ -281,7 +280,7 @@ impl Shuffler {
     pub fn step2_inputer_commits_random_values<C: AbstractChannel>(
         &self,
         expected_count: usize,
-        vole_receiver: &mut BufferedVoleReceiver<FourQVoleMac>,
+        vole_receiver: &mut BufferedVoleReceiver,
         channel: &mut C,
     ) -> Result<Vec<BeDOZaReceiver>> {
         let receiver_commitments = authenticate_batch_with_peer_key_receiver(
@@ -304,7 +303,7 @@ impl Shuffler {
         input_commitments: &[BeDOZaReceiver],
         random_value_commitments: &[BeDOZaReceiver],
         inputer_k0_share: &BeDOZa,
-        vole_receiver: &mut BufferedVoleReceiver<FourQVoleMac>,
+        vole_receiver: &mut BufferedVoleReceiver,
         channel: &mut C,
     ) -> Result<Vec<BeDOZaReceiver>> {
         ensure!(
@@ -345,9 +344,9 @@ impl Shuffler {
     pub fn step4_vole_share_x_times_k1_and_authenticate<C: AbstractChannel>(
         &self,
         expected_count: usize,
-        auth_vole_receiver: &mut BufferedVoleReceiver<FourQVoleMac>,
-        auth_vole_sender: &mut BufferedVoleSender<FourQVoleMac>,
-        k1_mul_vole_receiver: &mut BufferedVoleReceiver<FourQVoleMac>,
+        auth_vole_receiver: &mut BufferedVoleReceiver,
+        auth_vole_sender: &mut BufferedVoleSender,
+        k1_mul_vole_receiver: &mut BufferedVoleReceiver,
         channel: &mut C,
     ) -> Result<(Vec<FE>, Vec<BeDOZaReceiver>, Vec<BeDOZaSender>)> {
         // 1) Use VOLE to produce additive shares of x_i * k1:
@@ -445,9 +444,9 @@ impl Shuffler {
         authenticated_v_sender: &[BeDOZaSender],
         authenticated_k1_sender: &BeDOZaSender,
         k1_prime: FE,
-        auth_vole_receiver: &mut BufferedVoleReceiver<FourQVoleMac>,
-        auth_vole_sender: &mut BufferedVoleSender<FourQVoleMac>,
-        k1_prime_mul_vole_receiver: &mut BufferedVoleReceiver<FourQVoleMac>,
+        auth_vole_receiver: &mut BufferedVoleReceiver,
+        auth_vole_sender: &mut BufferedVoleSender,
+        k1_prime_mul_vole_receiver: &mut BufferedVoleReceiver,
         channel: &mut C,
     ) -> Result<()> {
         ensure!(
@@ -572,7 +571,7 @@ impl Shuffler {
         &self,
         r_x_k_values: &[FE],
         authenticated_v_sender: &[BeDOZaSender],
-        reauth_vole_sender: &mut BufferedVoleSender<FourQVoleMac>,
+        reauth_vole_sender: &mut BufferedVoleSender,
         rng: &mut RNG,
         channel: &mut C,
     ) -> Result<Vec<BeDOZaSender>> {
@@ -622,7 +621,7 @@ impl Shuffler {
     pub fn step9_authenticate_inverses_and_prove<C: AbstractChannel>(
         &self,
         authenticated_r_x_k_sender: &[BeDOZaSender],
-        inverse_auth_vole_sender: &mut BufferedVoleSender<FourQVoleMac>,
+        inverse_auth_vole_sender: &mut BufferedVoleSender,
         channel: &mut C,
     ) -> Result<(Vec<FE>, Vec<BeDOZaSender>)> {
         let _ = self.delta_1;
@@ -655,10 +654,10 @@ impl Shuffler {
         Ok((inverse_values, authenticated_inverse_sender))
     }
 
-    pub fn step10_receive_g_ri_and_verify_pad_consistency(
+    pub fn step10_receive_g_ri_and_verify_pad_consistency<C: AbstractChannel>(
         &self,
         authenticated_ri_receiver: &[BeDOZaReceiver],
-        channel: &mut TcpChannel,
+        channel: &mut C,
     ) -> Result<Vec<Group>> {
         ensure!(
             !authenticated_ri_receiver.is_empty(),
@@ -678,8 +677,11 @@ impl Shuffler {
         let mut rng = rand::rng();
         let seed: [u8; 32] = rng.random::<[u8; 32]>();
         channel
-            .send(&seed)
+            .write_bytes(&seed)
             .map_err(|e| anyhow!("step10 failed to send seed: {}", e))?;
+        channel
+            .flush()
+            .map_err(|e| anyhow!("step10 failed to flush seed: {}", e))?;
         let mut seeded_rng = StdRng::from_seed(seed);
         let alphas = random_fe_vec_from_rng(&mut seeded_rng, authenticated_ri_receiver.len())?;
 
@@ -723,7 +725,7 @@ impl Shuffler {
     pub fn step11_authenticate_permutation_values<C: AbstractChannel>(
         &self,
         permutation: &[usize],
-        permutation_auth_vole_sender: &mut BufferedVoleSender<FourQVoleMac>,
+        permutation_auth_vole_sender: &mut BufferedVoleSender,
         channel: &mut C,
     ) -> Result<Vec<BeDOZaSender>> {
         let _ = self.delta_1;
@@ -767,7 +769,7 @@ impl Shuffler {
     pub fn step12_receive_challenge_and_authenticate_x_powers<C: AbstractChannel>(
         &self,
         permutation: &[usize],
-        x_power_auth_vole_sender: &mut BufferedVoleSender<FourQVoleMac>,
+        x_power_auth_vole_sender: &mut BufferedVoleSender,
         channel: &mut C,
     ) -> Result<(FE, Vec<FE>, Vec<BeDOZaSender>)> {
         let _ = self.delta_1;
@@ -823,7 +825,7 @@ impl Shuffler {
         permutation: &[usize],
         authenticated_x_powers_sender: &[BeDOZaSender],
         authenticated_inverse_sender: &[BeDOZaSender],
-        vole_sender: &mut BufferedVoleSender<FourQVoleMac>,
+        vole_sender: &mut BufferedVoleSender,
         channel: &mut C,
     ) -> Result<(Vec<FE>, Vec<FE>, Vec<BeDOZaSender>, Vec<BeDOZaSender>)> {
         let _ = self.delta_1;
@@ -893,7 +895,7 @@ impl Shuffler {
         authenticated_y_pi_sender: &[BeDOZaSender],
         authenticated_z_sender: &[BeDOZaSender],
         authenticated_x_powers_sender: &[BeDOZaSender],
-        product_identity_auth_vole_sender: &mut BufferedVoleSender<FourQVoleMac>,
+        product_identity_auth_vole_sender: &mut BufferedVoleSender,
         channel: &mut C,
     ) -> Result<()> {
         let _ = self.delta_1;
@@ -1036,12 +1038,12 @@ impl Shuffler {
         Ok(())
     }
 
-    pub fn step15_send_shuffled_oprf_points(
+    pub fn step15_send_shuffled_oprf_points<C: AbstractChannel>(
         &self,
         permutation: &[usize],
         g_ri: &[Group],
         inverse_values: &[FE],
-        channel: &mut TcpChannel,
+        channel: &mut C,
     ) -> Result<Vec<Group>> {
         let _ = self.delta_1;
         ensure!(
@@ -1072,12 +1074,12 @@ impl Shuffler {
         Ok(shuffled_oprf)
     }
 
-    pub fn step16_open_left_oprf_product_and_pad_proof(
+    pub fn step16_open_left_oprf_product_and_pad_proof<C: AbstractChannel>(
         &self,
         g_ri: &[Group],
         authenticated_inverse_sender: &[BeDOZaSender],
         x: FE,
-        channel: &mut TcpChannel,
+        channel: &mut C,
     ) -> Result<Group> {
         let _ = self.delta_1;
         ensure!(!g_ri.is_empty(), "step16 cannot run on empty g^ri batch");
@@ -1111,11 +1113,11 @@ impl Shuffler {
         Ok(opened_left_product)
     }
 
-    pub fn step17_open_right_oprf_product_and_pad_proof(
+    pub fn step17_open_right_oprf_product_and_pad_proof<C: AbstractChannel>(
         &self,
         shuffled_oprf: &[Group],
         authenticated_x_powers_sender: &[BeDOZaSender],
-        channel: &mut TcpChannel,
+        channel: &mut C,
     ) -> Result<Group> {
         let _ = self.delta_1;
         ensure!(
@@ -1168,12 +1170,11 @@ impl Shuffler {
         permutation: &[usize],
         k1_prime: FE,
         rng: &mut RNG,
-        auth_vole_sender: &mut BufferedVoleSender<FourQVoleMac>,
-        auth_vole_receiver: &mut BufferedVoleReceiver<FourQVoleMac>,
-        k1_mul_vole_receiver: &mut BufferedVoleReceiver<FourQVoleMac>,
-        k1_prime_mul_vole_receiver: &mut BufferedVoleReceiver<FourQVoleMac>,
+        auth_vole_sender: &mut BufferedVoleSender,
+        auth_vole_receiver: &mut BufferedVoleReceiver,
+        k1_mul_vole_receiver: &mut BufferedVoleReceiver,
+        k1_prime_mul_vole_receiver: &mut BufferedVoleReceiver,
         channel: &mut C,
-        tcp_channel: &mut TcpChannel,
     ) -> Result<Vec<Group>> {
         ensure!(
             !permutation.is_empty(),
@@ -1245,10 +1246,8 @@ impl Shuffler {
                 auth_vole_sender,
                 channel,
             )?;
-        let g_ri = self.step10_receive_g_ri_and_verify_pad_consistency(
-            &authenticated_ri_receiver,
-            tcp_channel,
-        )?;
+        let g_ri =
+            self.step10_receive_g_ri_and_verify_pad_consistency(&authenticated_ri_receiver, channel)?;
         let authenticated_pi_sender =
             self.step11_authenticate_permutation_values(permutation, auth_vole_sender, channel)?;
         let (x, _permuted_x_powers, authenticated_x_powers_sender) = self
@@ -1283,18 +1282,18 @@ impl Shuffler {
             permutation,
             &g_ri,
             &inverse_values,
-            tcp_channel,
+            channel,
         )?;
         let opened_left_product = self.step16_open_left_oprf_product_and_pad_proof(
             &g_ri,
             &authenticated_inverse_sender,
             x,
-            tcp_channel,
+            channel,
         )?;
         let opened_right_product = self.step17_open_right_oprf_product_and_pad_proof(
             &shuffled_oprf,
             &authenticated_x_powers_sender,
-            tcp_channel,
+            channel,
         )?;
         self.step18_verify_opened_oprf_products_match(&opened_left_product, &opened_right_product)?;
 

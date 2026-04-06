@@ -8,7 +8,7 @@ use circuit_psi::{
         bedoza_sender::{BeDOZaSender, send_open_shares},
         defines::FE,
     },
-    tcp_channel::{TcpChannel, connect_with_retry, listen_to},
+    tcp_channel::{SwankyChannel, connect_with_retry, listen_to},
 };
 
 fn fe(n: u8) -> FE {
@@ -122,7 +122,7 @@ fn send_openings_for_peer(
     x_shares: &[BeDOZa],
     y_shares: &[BeDOZa],
     triples: &[BeDOZaTriple],
-    channel: &mut TcpChannel,
+    channel: &mut SwankyChannel,
 ) -> Result<()> {
     let d_shares: Vec<BeDOZa> = x_shares
         .iter()

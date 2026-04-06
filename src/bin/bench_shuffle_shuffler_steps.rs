@@ -2,38 +2,20 @@ use anyhow::{Context, Result, anyhow, ensure};
 use circuit_psi::{
     bedoza::{
         defines::{FE, random_fe_vec_from_rng},
-        vole_auth::FourQVoleMac,
     },
     scalar_field::fq,
     shuffle_shuffler::Shuffler,
-    tcp_channel::{listen_swanky, listen_to},
+    tcp_channel::listen_to,
+    vole_triple::LPN21,
     vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
 };
-use mac_n_cheese_vole::{mac::Mac, vole::VoleSizes};
 use rand::{Rng, RngExt, SeedableRng, rngs::StdRng};
 use std::time::Instant;
-use swanky_aes_rng::AesRng;
-use swanky_party::{IS_PROVER, IS_VERIFIER, Prover, Verifier};
-
-type SenderMac = Mac<Prover, FourQVoleMac>;
-type ReceiverMac = Mac<Verifier, FourQVoleMac>;
+use swanky_channel_legacy::AesRng;
 
 const SWANKY_ADDR: &str = "127.0.0.1:23000";
 const TCP_ADDR: &str = "127.0.0.1:23001";
 const SHUFFLER_RNG_SEED: [u8; 32] = [42u8; 32];
-
-fn make_base_voles(key: FE, count: usize, offset: u64) -> (Vec<SenderMac>, Vec<ReceiverMac>) {
-    let mut sender = Vec::with_capacity(count);
-    let mut receiver = Vec::with_capacity(count);
-    for i in 0..count {
-        let idx = offset + i as u64;
-        let x = fq(idx + 1);
-        let beta = fq(3 * idx + 7);
-        sender.push(Mac::prover_new(IS_PROVER, x, beta));
-        receiver.push(Mac::verifier_new(IS_VERIFIER, x * key + beta));
-    }
-    (sender, receiver)
-}
 
 fn random_permutation(n: usize, rng: &mut impl Rng) -> Vec<usize> {
     let mut p: Vec<usize> = (0..n).collect();
@@ -72,15 +54,10 @@ fn main() -> Result<()> {
     let mut preview_rng = StdRng::from_seed(SHUFFLER_RNG_SEED);
     let k1_preview = random_fe_vec_from_rng(&mut preview_rng, 1)?[0];
 
-    let sizes = VoleSizes::of::<FE, FE>();
-    let (_, auth_receiver_base) = make_base_voles(delta_1, sizes.base_voles_needed, 10_000);
-    let (auth_sender_base, _) = make_base_voles(delta_0, sizes.base_voles_needed, 1_000_000);
-    let (_, k1_mul_receiver_base) = make_base_voles(k1_preview, sizes.base_voles_needed, 2_000_000);
-    let (_, k1_prime_mul_receiver_base) =
-        make_base_voles(k1_prime, sizes.base_voles_needed, 3_000_000);
+    let _ = (delta_0, delta_1, k1_prime);
 
-    let mut swanky = timed("listen_swanky", || {
-        listen_swanky(SWANKY_ADDR).context("listen swanky channel")
+    let mut swanky = timed("listen_to", || {
+        listen_to(SWANKY_ADDR).context("listen swanky channel")
     })?;
     let mut tcp = timed("listen_tcp", || {
         listen_to(TCP_ADDR).context("listen tcp channel")
@@ -88,16 +65,15 @@ fn main() -> Result<()> {
 
     let mut vole_rng = AesRng::new();
     let mut auth_vole_receiver = timed("init_auth_vole_receiver", || {
-        BufferedVoleReceiver::<FourQVoleMac>::init(
+        BufferedVoleReceiver::init(
             &mut swanky,
-            &mut vole_rng,
             -delta_1,
-            auth_receiver_base,
+            LPN21,
         )
         .map_err(|e| anyhow!("init auth receiver VOLE failed: {}", e))
     })?;
     let mut auth_vole_sender = timed("init_auth_vole_sender", || {
-        BufferedVoleSender::<FourQVoleMac>::init(&mut swanky, &mut vole_rng, auth_sender_base)
+        BufferedVoleSender::init(&mut swanky, LPN21)
             .map_err(|e| anyhow!("init auth sender VOLE failed: {}", e))
     })?;
 
@@ -118,21 +94,19 @@ fn main() -> Result<()> {
     );
 
     let mut k1_mul_vole_receiver = timed("init_k1_mul_vole_receiver", || {
-        BufferedVoleReceiver::<FourQVoleMac>::init(
+        BufferedVoleReceiver::init(
             &mut swanky,
-            &mut vole_rng,
             -k1,
-            k1_mul_receiver_base,
+            LPN21,
         )
         .map_err(|e| anyhow!("init k1 mul receiver VOLE failed: {}", e))
     })?;
     let mut k1_prime_mul_vole_receiver =
         timed("init_k1_prime_mul_vole_receiver", || {
-            BufferedVoleReceiver::<FourQVoleMac>::init(
+            BufferedVoleReceiver::init(
                 &mut swanky,
-                &mut vole_rng,
                 -k1_prime,
-                k1_prime_mul_receiver_base,
+                LPN21,
             )
             .map_err(|e| anyhow!("init k1' mul receiver VOLE failed: {}", e))
         })?;

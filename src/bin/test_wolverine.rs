@@ -7,12 +7,11 @@ use circuit_psi::{
         wolverine::{wolverine_batch_mul_prove, wolverine_batch_mul_verify},
     },
     scalar_field::fq,
-    tcp_channel::swanky_channel_from_tcp_stream,
+    tcp_channel::{connect_with_retry, listen_to},
 };
 use std::{
-    net::{SocketAddr, TcpListener, TcpStream},
+    net::TcpListener,
     thread,
-    time::Duration,
 };
 
 type SenderBatch = (
@@ -27,16 +26,6 @@ type ReceiverBatch = (
     Vec<BeDOZaReceiver>,
     BeDOZaReceiver,
 );
-
-fn connect_with_retry(addr: SocketAddr) -> Result<TcpStream> {
-    for _ in 0..200 {
-        if let Ok(stream) = TcpStream::connect(addr) {
-            return Ok(stream);
-        }
-        thread::sleep(Duration::from_millis(5));
-    }
-    anyhow::bail!("failed to connect to {}", addr);
-}
 
 fn make_batch(delta_1: FE, gates: usize, tamper_one_gate: bool) -> (SenderBatch, ReceiverBatch) {
     let mut a_sender = Vec::with_capacity(gates);
@@ -84,17 +73,20 @@ fn run_round(delta_1: FE, gates: usize, tamper_one_gate: bool, expect_ok: bool) 
         make_batch(delta_1, gates, tamper_one_gate);
 
     let listener = TcpListener::bind("127.0.0.1:0").context("bind localhost listener")?;
-    let addr = listener.local_addr().context("read listener address")?;
+    let addr_str = listener
+        .local_addr()
+        .context("read listener address")?
+        .to_string();
+    drop(listener);
 
+    let prover_addr = addr_str.clone();
     let prover_handle = thread::spawn(move || -> Result<()> {
-        let (socket, _) = listener.accept().context("prover accept")?;
-        let mut channel = swanky_channel_from_tcp_stream(socket)?;
+        let mut channel = listen_to(&prover_addr)?;
         wolverine_batch_mul_prove(&a_s, &b_s, &c_s, &dummy_s, &mut channel)
             .context("prover failed in Wolverine batch-mul proof")
     });
 
-    let socket = connect_with_retry(addr)?;
-    let mut channel = swanky_channel_from_tcp_stream(socket)?;
+    let mut channel = connect_with_retry(&addr_str)?;
     let verifier_result = wolverine_batch_mul_verify(&a_r, &b_r, &c_r, &dummy_r, &mut channel);
 
     let prover_result = prover_handle.join().expect("prover thread panicked");

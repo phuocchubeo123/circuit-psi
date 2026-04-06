@@ -1,15 +1,15 @@
 use anyhow::{Context, Result, anyhow, bail};
 use circuit_psi::base_cot::BaseCot;
 use circuit_psi::bedoza::{BeDOZa, BeDOZaTriple};
-use circuit_psi::bedoza::vole_auth::FourQVoleMac;
 use circuit_psi::mascot::triple::{MascotTripleReceiver, MascotTripleSender, REPETITION};
-use circuit_psi::network::tcp_channel::{connect_swanky_with_retry, listen_swanky};
+use circuit_psi::network::tcp_channel::{connect_with_retry, listen_to};
 use circuit_psi::pre_ot::OTPre;
 use circuit_psi::scalar_field::{FOURQ_SCALAR_BITS, fq};
 use circuit_psi::vole::field_config::{FE, FE_LIMBS};
+use circuit_psi::vole_triple::LPN21;
 use circuit_psi::vole_buffer::{BufferedVoleReceiver, BufferedVoleSender};
 use std::time::Instant;
-use swanky_aes_rng::AesRng;
+use swanky_channel_legacy::AesRng;
 use swanky_channel_legacy::AbstractChannel;
 
 const DEFAULT_ADDR: &str = "127.0.0.1:19110";
@@ -100,7 +100,7 @@ fn open_authenticated_triples<IO: AbstractChannel>(
 }
 
 fn run_sender(addr: &str, n: usize) -> Result<()> {
-    let mut io = connect_swanky_with_retry(addr).with_context(|| format!("connect {addr}"))?;
+    let mut io = connect_with_retry(addr).with_context(|| format!("connect {addr}"))?;
     let mut comm = 0u64;
     let mut mascot = MascotTripleSender::new();
     let local_key = fq(DELTA_SENDER);
@@ -133,13 +133,12 @@ fn run_sender(addr: &str, n: usize) -> Result<()> {
     let mut vole_rng = AesRng::new();
     // Sender role initializes VOLE sender first (peer initializes VOLE receiver first).
     let mut auth_vole_sender =
-        BufferedVoleSender::<FourQVoleMac>::init(&mut io, &mut vole_rng, Vec::new())
+        BufferedVoleSender::init(&mut io, LPN21)
             .map_err(|e| anyhow!("init auth VOLE sender failed: {e}"))?;
-    let mut auth_vole_receiver = BufferedVoleReceiver::<FourQVoleMac>::init(
+    let mut auth_vole_receiver = BufferedVoleReceiver::init(
         &mut io,
-        &mut vole_rng,
         -local_key,
-        Vec::new(),
+        LPN21,
     )
     .map_err(|e| anyhow!("init auth VOLE receiver failed: {e}"))?;
 
@@ -172,7 +171,7 @@ fn run_sender(addr: &str, n: usize) -> Result<()> {
 }
 
 fn run_receiver(addr: &str, n: usize) -> Result<()> {
-    let mut io = listen_swanky(addr).with_context(|| format!("listen {addr}"))?;
+    let mut io = listen_to(addr).with_context(|| format!("listen {addr}"))?;
     let mut comm = 0u64;
     let mut mascot = MascotTripleReceiver::new();
     let local_key = fq(DELTA_RECEIVER);
@@ -205,15 +204,14 @@ fn run_receiver(addr: &str, n: usize) -> Result<()> {
 
     let mut vole_rng = AesRng::new();
     // Receiver role initializes VOLE receiver first (peer initializes VOLE sender first).
-    let mut auth_vole_receiver = BufferedVoleReceiver::<FourQVoleMac>::init(
+    let mut auth_vole_receiver = BufferedVoleReceiver::init(
         &mut io,
-        &mut vole_rng,
         -local_key,
-        Vec::new(),
+        LPN21,
     )
     .map_err(|e| anyhow!("init auth VOLE receiver failed: {e}"))?;
     let mut auth_vole_sender =
-        BufferedVoleSender::<FourQVoleMac>::init(&mut io, &mut vole_rng, Vec::new())
+        BufferedVoleSender::init(&mut io, LPN21)
             .map_err(|e| anyhow!("init auth VOLE sender failed: {e}"))?;
 
     println!("OT precomputation done: {:?}", start.elapsed());
