@@ -19,11 +19,11 @@ fourq = "0.1.6"
 crypto-bigint = "0.5.5"
 serde = { version = "1.0.228", features = ["derive"] }
 subtle = "=2.5.0"
-swanky-channel-legacy = { package = "scuttlebutt", path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/553ede0/scuttlebutt" }
-swanky-field-binary = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/553ede0/crates/field-binary" }
-swanky-field = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/553ede0/crates/field" }
-swanky-party = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/553ede0/crates/party" }
-swanky-serialization = { path = "/home/ubuntu/.cargo/git/checkouts/swanky-5da08cbc633fe94e/553ede0/crates/serialization" }
+swanky-channel-legacy = { package = "scuttlebutt", git = "https://github.com/GaloisInc/swanky", rev = "553ede0" }
+swanky-field-binary = { git = "https://github.com/GaloisInc/swanky", package = "swanky-field-binary", rev = "553ede0" }
+swanky-field = { git = "https://github.com/GaloisInc/swanky", package = "swanky-field", rev = "553ede0" }
+swanky-party = { git = "https://github.com/GaloisInc/swanky", package = "swanky-party", rev = "553ede0" }
+swanky-serialization = { git = "https://github.com/GaloisInc/swanky", package = "swanky-serialization", rev = "553ede0" }
 psi-aes = { path = "src/psi-aes" }
 aes = "0.8.4"
 p256 = "0.13.2"

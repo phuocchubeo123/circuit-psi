@@ -19,3 +19,16 @@ pub fn random_fe_vec_from_rng(rng: &mut impl Rng, cnt: usize) -> Result<Vec<FE>>
     }
     Ok(out)
 }
+
+pub fn powers(base: FE, n: usize) -> Vec<FE> {
+    let mut out = Vec::with_capacity(n);
+    if n == 0 {
+        return out;
+    }
+    out.push(FE::one());
+    for _ in 1..n {
+        let next = *out.last().unwrap() * base;
+        out.push(next);
+    }
+    out
+}

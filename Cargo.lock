@@ -1233,6 +1233,7 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 [[package]]
 name = "scuttlebutt"
 version = "0.6.0"
+source = "git+https://github.com/GaloisInc/swanky?rev=553ede0#553ede0dc97fa6db06d87db395dad4501f0473b1"
 dependencies = [
  "bytemuck",
  "curve25519-dalek",
@@ -1376,6 +1377,7 @@ checksum = "81cdd64d312baedb58e21336b31bc043b77e01cc99033ce76ef539f78e965ebc"
 [[package]]
 name = "swanky-channel"
 version = "0.6.0"
+source = "git+https://github.com/GaloisInc/swanky?rev=553ede0#553ede0dc97fa6db06d87db395dad4501f0473b1"
 dependencies = [
  "eyre",
  "generic-array 1.3.5",
@@ -1385,6 +1387,7 @@ dependencies = [
 [[package]]
 name = "swanky-field"
 version = "0.6.0"
+source = "git+https://github.com/GaloisInc/swanky?rev=553ede0#553ede0dc97fa6db06d87db395dad4501f0473b1"
 dependencies = [
  "crypto-bigint",
  "generic-array 1.3.5",
@@ -1397,6 +1400,7 @@ dependencies = [
 [[package]]
 name = "swanky-field-binary"
 version = "0.6.0"
+source = "git+https://github.com/GaloisInc/swanky?rev=553ede0#553ede0dc97fa6db06d87db395dad4501f0473b1"
 dependencies = [
  "bytemuck",
  "crypto-bigint",
@@ -1411,6 +1415,7 @@ dependencies = [
 [[package]]
 name = "swanky-field-f61p"
 version = "0.6.0"
+source = "git+https://github.com/GaloisInc/swanky?rev=553ede0#553ede0dc97fa6db06d87db395dad4501f0473b1"
 dependencies = [
  "bytemuck",
  "crypto-bigint",
@@ -1424,6 +1429,7 @@ dependencies = [
 [[package]]
 name = "swanky-field-ff-primes"
 version = "0.6.0"
+source = "git+https://github.com/GaloisInc/swanky?rev=553ede0#553ede0dc97fa6db06d87db395dad4501f0473b1"
 dependencies = [
  "bytemuck",
  "crypto-bigint",
@@ -1448,6 +1454,7 @@ dependencies = [
 [[package]]
 name = "swanky-field-fft"
 version = "0.6.0"
+source = "git+https://github.com/GaloisInc/swanky?rev=553ede0#553ede0dc97fa6db06d87db395dad4501f0473b1"
 dependencies = [
  "swanky-field",
 ]
@@ -1455,6 +1462,7 @@ dependencies = [
 [[package]]
 name = "swanky-party"
 version = "0.6.0"
+source = "git+https://github.com/GaloisInc/swanky?rev=553ede0#553ede0dc97fa6db06d87db395dad4501f0473b1"
 dependencies = [
  "bytemuck",
 ]
@@ -1462,6 +1470,7 @@ dependencies = [
 [[package]]
 name = "swanky-serialization"
 version = "0.6.0"
+source = "git+https://github.com/GaloisInc/swanky?rev=553ede0#553ede0dc97fa6db06d87db395dad4501f0473b1"
 dependencies = [
  "bytemuck",
  "generic-array 1.3.5",
@@ -1537,6 +1546,7 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 [[package]]
 name = "vectoreyes"
 version = "0.6.0"
+source = "git+https://github.com/GaloisInc/swanky?rev=553ede0#553ede0dc97fa6db06d87db395dad4501f0473b1"
 dependencies = [
  "aes",
  "bytemuck",

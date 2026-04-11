@@ -1,6 +1,6 @@
 use crate::{
     bedoza::{comm_util::send_fe_vec, defines::FE},
-    tcp_channel::SwankyChannel,
+    network::tcp_channel::SwankyChannel,
 };
 use anyhow::{Result, anyhow, ensure};
 use std::ops::{Add, Mul, Sub};
@@ -30,37 +30,6 @@ impl BeDOZaSender {
     }
 }
 
-pub fn share_values_sender(
-    vals: &[FE],
-    prepared_bedoza_senders: &[BeDOZaSender],
-    channel: &mut SwankyChannel,
-) -> Result<Vec<BeDOZaSender>> {
-    ensure!(
-        vals.len() == prepared_bedoza_senders.len(),
-        "Length mismatch between vals and prepared_bedoza_senders: lhs = {}, rhs = {}",
-        vals.len(),
-        prepared_bedoza_senders.len()
-    );
-
-    // Mask the values with prepared randomness
-    let masked_vals: Vec<FE> = vals
-        .iter()
-        .zip(prepared_bedoza_senders.iter())
-        .map(|(x, r)| x - r.val())
-        .collect();
-
-    // Send these masked values to the receiver
-    send_fe_vec(&masked_vals, channel).map_err(|e| anyhow!("Failed to send fe values: {}", e))?;
-
-    let bedoza_shared_senders: Vec<BeDOZaSender> = prepared_bedoza_senders
-        .iter()
-        .zip(masked_vals.iter())
-        .map(|(x, y)| x + *y)
-        .collect();
-
-    Ok(bedoza_shared_senders)
-}
-
 pub fn send_open_shares(bedoza_senders: &[BeDOZaSender], channel: &mut SwankyChannel) -> Result<()> {
     let vals: Vec<FE> = bedoza_senders
         .iter()
@@ -76,6 +45,28 @@ pub fn send_open_shares(bedoza_senders: &[BeDOZaSender], channel: &mut SwankyCha
 
     Ok(())
 }
+
+pub fn linear_comb_sender(
+    shares: &[BeDOZaSender],
+    coeffs: &[FE],
+    context: &str,
+) -> Result<BeDOZaSender> {
+    ensure!(!shares.is_empty(), "{}: empty share list", context);
+    ensure!(
+        shares.len() == coeffs.len(),
+        "{}: length mismatch shares={} coeffs={}",
+        context,
+        shares.len(),
+        coeffs.len()
+    );
+
+    let mut acc = shares[0] * coeffs[0];
+    for (share, &coeff) in shares.iter().skip(1).zip(coeffs.iter().skip(1)) {
+        acc = acc + (*share * coeff);
+    }
+    Ok(acc)
+}
+
 
 impl Add<&BeDOZaSender> for &BeDOZaSender {
     type Output = BeDOZaSender;

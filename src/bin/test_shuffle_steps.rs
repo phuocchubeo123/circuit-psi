@@ -13,7 +13,6 @@ use circuit_psi::{
     vole_triple::LPN21,
     vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
 };
-use circuit_psi::mac_n_cheese_vole::vole::VoleSizes;
 use rand::{SeedableRng, rngs::StdRng};
 use std::{
     net::TcpListener,
@@ -53,10 +52,6 @@ fn run_inputer(
     tcp_addr: String,
     delta_0: FE,
     x_values: Vec<FE>,
-    auth_sender_base: Vec<SenderMac>,
-    auth_receiver_base: Vec<ReceiverMac>,
-    k1_mul_sender_base: Vec<SenderMac>,
-    k1_prime_mul_sender_base: Vec<SenderMac>,
 ) -> Result<Vec<Group>> {
     let mut channel =
         listen_to(&swanky_addr).with_context(|| format!("inputer listen swanky at {}", swanky_addr))?;

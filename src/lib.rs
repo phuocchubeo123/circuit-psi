@@ -7,7 +7,6 @@ pub mod shuffle_inputer;
 pub mod shuffle_shuffler;
 pub mod network;
 pub use network::tcp_channel;
-pub mod mac_n_cheese_vole;
 pub mod mascot;
 pub mod ot;
 pub mod vole;

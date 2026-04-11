@@ -34,22 +34,6 @@ impl BeDOZaReceiver {
     }
 }
 
-pub fn receive_share_values_receiver(
-    prepared_bedoza_receivers: &[BeDOZaReceiver],
-    channel: &mut SwankyChannel,
-) -> Result<Vec<BeDOZaReceiver>> {
-    let masked_vals =
-        receive_fe_vec(channel).map_err(|e| anyhow!("Failed to receive FE vec: {}", e))?;
-
-    let bedoza_shared_receivers = prepared_bedoza_receivers
-        .iter()
-        .zip(masked_vals.iter())
-        .map(|(x, y)| x + *y)
-        .collect();
-
-    Ok(bedoza_shared_receivers)
-}
-
 /// Receive the shares from BeDOZaSender
 pub fn receive_open_shares(
     bedoza_receivers: &[BeDOZaReceiver],
@@ -95,6 +79,27 @@ pub fn receive_open_shares(
     }
 
     Ok(values)
+}
+
+pub fn linear_comb_receiver(
+    shares: &[BeDOZaReceiver],
+    coeffs: &[FE],
+    context: &str,
+) -> Result<BeDOZaReceiver> {
+    ensure!(!shares.is_empty(), "{}: empty share list", context);
+    ensure!(
+        shares.len() == coeffs.len(),
+        "{}: length mismatch shares={} coeffs={}",
+        context,
+        shares.len(),
+        coeffs.len()
+    );
+
+    let mut acc = shares[0] * coeffs[0];
+    for (share, &coeff) in shares.iter().skip(1).zip(coeffs.iter().skip(1)) {
+        acc = acc + (*share * coeff);
+    }
+    Ok(acc)
 }
 
 impl Add<&BeDOZaReceiver> for &BeDOZaReceiver {

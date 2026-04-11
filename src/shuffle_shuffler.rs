@@ -1,9 +1,9 @@
 use crate::{
     bedoza::{
         BeDOZa,
-        bedoza_receiver::BeDOZaReceiver,
-        bedoza_sender::BeDOZaSender,
-        defines::{FE, random_fe_vec_from_rng},
+        bedoza_receiver::{BeDOZaReceiver, linear_comb_receiver},
+        bedoza_sender::{BeDOZaSender, linear_comb_sender},
+        defines::{FE, random_fe_vec_from_rng, powers},
         vole_auth::{
             authenticate_batch_with_peer_key_receiver, authenticate_batch_with_peer_key_sender,
             vole_share_product_receiver,
@@ -24,60 +24,6 @@ use swanky_channel_legacy::AbstractChannel;
 // - Shuffler (this module, previously "verifier"): owns permutation and key delta_1.
 // - Inputer (peer, previously "prover"): owns inputs and key delta_0.
 
-fn powers(base: FE, n: usize) -> Vec<FE> {
-    let mut out = Vec::with_capacity(n);
-    if n == 0 {
-        return out;
-    }
-    out.push(FE::one());
-    for _ in 1..n {
-        let next = *out.last().unwrap() * base;
-        out.push(next);
-    }
-    out
-}
-
-fn linear_comb_receiver(
-    shares: &[BeDOZaReceiver],
-    coeffs: &[FE],
-    context: &str,
-) -> Result<BeDOZaReceiver> {
-    ensure!(!shares.is_empty(), "{}: empty share list", context);
-    ensure!(
-        shares.len() == coeffs.len(),
-        "{}: length mismatch shares={} coeffs={}",
-        context,
-        shares.len(),
-        coeffs.len()
-    );
-
-    let mut acc = shares[0] * coeffs[0];
-    for (share, &coeff) in shares.iter().skip(1).zip(coeffs.iter().skip(1)) {
-        acc = acc + (*share * coeff);
-    }
-    Ok(acc)
-}
-
-fn linear_comb_sender(
-    shares: &[BeDOZaSender],
-    coeffs: &[FE],
-    context: &str,
-) -> Result<BeDOZaSender> {
-    ensure!(!shares.is_empty(), "{}: empty share list", context);
-    ensure!(
-        shares.len() == coeffs.len(),
-        "{}: length mismatch shares={} coeffs={}",
-        context,
-        shares.len(),
-        coeffs.len()
-    );
-
-    let mut acc = shares[0] * coeffs[0];
-    for (share, &coeff) in shares.iter().skip(1).zip(coeffs.iter().skip(1)) {
-        acc = acc + (*share * coeff);
-    }
-    Ok(acc)
-}
 
 fn batch_invert_nonzero(values: &[FE], context: &str) -> Result<Vec<FE>> {
     ensure!(!values.is_empty(), "{}: empty input", context);
