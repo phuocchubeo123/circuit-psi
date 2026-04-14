@@ -1,7 +1,10 @@
-use crate::bedoza::{
-    bedoza_receiver::BeDOZaReceiver,
-    bedoza_sender::BeDOZaSender,
-    defines::{FE, random_fe_vec_from_rng},
+use crate::{
+    bedoza::{
+        bedoza_receiver::BeDOZaReceiver,
+        bedoza_sender::BeDOZaSender,
+        defines::{FE, random_fe_vec_from_rng},
+    },
+    vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
 };
 use anyhow::{Result, anyhow, ensure};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
@@ -52,10 +55,13 @@ pub fn wolverine_batch_mul_prove<C: AbstractChannel>(
     a: &[BeDOZaSender],
     b: &[BeDOZaSender],
     c: &[BeDOZaSender],
-    dummy_x: &BeDOZaSender,
+    vole_sender: &mut BufferedVoleSender,
     channel: &mut C,
 ) -> Result<()> {
     check_lengths(a, b, c, "wolverine_batch_mul_prove")?;
+    let dummy_x = vole_sender
+        .random_auth(channel, 1)
+        .map_err(|e| anyhow!("failed to authenticate Wolverine dummy x: {e}"))?[0];
 
     // Verifier samples and sends challenge seed.
     let mut seed = [0u8; 32];
@@ -104,10 +110,13 @@ pub fn wolverine_batch_mul_verify<C: AbstractChannel>(
     a: &[BeDOZaReceiver],
     b: &[BeDOZaReceiver],
     c: &[BeDOZaReceiver],
-    dummy_v: &BeDOZaReceiver,
+    vole_receiver: &mut BufferedVoleReceiver,
     channel: &mut C,
 ) -> Result<()> {
     check_lengths(a, b, c, "wolverine_batch_mul_verify")?;
+    let dummy_v = vole_receiver
+        .random_auth(channel, 1)
+        .map_err(|e| anyhow!("failed to authenticate Wolverine dummy x: {e}"))?[0];
 
     let delta_1 = a[0].key();
     for (i, (a_i, b_i, c_i)) in a
@@ -167,9 +176,13 @@ pub fn wolverine_batch_mul_public_output_prove<C: AbstractChannel>(
     a: &[BeDOZaSender],
     b: &[BeDOZaSender],
     public_c: &[FE],
+    vole_sender: &mut BufferedVoleSender,
     channel: &mut C,
 ) -> Result<()> {
     check_lengths_mixed(a, b, public_c, "wolverine_batch_mul_public_output_prove")?;
+    let dummy_x = vole_sender
+        .random_auth(channel, 1)
+        .map_err(|e| anyhow!("failed to authenticate Wolverine public-output dummy x: {e}"))?[0];
 
     // Verifier samples and sends challenge seed.
     let mut seed = [0u8; 32];
@@ -177,12 +190,14 @@ pub fn wolverine_batch_mul_public_output_prove<C: AbstractChannel>(
         .read_bytes(&mut seed)
         .map_err(|e| anyhow!("failed to receive Wolverine public-output seed: {}", e))?;
     let mut seeded_rng = StdRng::from_seed(seed);
-    let coeffs = random_fe_vec_from_rng(&mut seeded_rng, a.len())?;
+    let coeffs = random_fe_vec_from_rng(&mut seeded_rng, a.len() + 1)?;
+    let (mul_coeffs, dummy_coeffs) = coeffs.split_at(a.len());
+    let dummy_coeff = dummy_coeffs[0];
 
     // For v_a = delta*a + pad_a, v_b = delta*b + pad_b and c public:
     // v_a*v_b - delta^2*c = delta*(pad_a*b + pad_b*a) + pad_a*pad_b
     // whenever a*b = c.
-    let lambda_batch = coeffs
+    let lambda_batch_mul = mul_coeffs
         .iter()
         .zip(a.iter().zip(b.iter()))
         .map(|(&eta_i, (a_i, b_i))| {
@@ -191,11 +206,13 @@ pub fn wolverine_batch_mul_public_output_prove<C: AbstractChannel>(
         })
         .fold(FE::zero(), |acc, term| acc + term);
 
-    let mu_batch = coeffs
+    let mu_batch_mul = mul_coeffs
         .iter()
         .zip(a.iter().zip(b.iter()))
         .map(|(&eta_i, (a_i, b_i))| eta_i * (a_i.pad() * b_i.pad()))
         .fold(FE::zero(), |acc, term| acc + term);
+    let lambda_batch = lambda_batch_mul + dummy_coeff * dummy_x.val();
+    let mu_batch = mu_batch_mul + dummy_coeff * dummy_x.pad();
 
     send_fe_abstract(channel, lambda_batch)?;
     send_fe_abstract(channel, mu_batch)?;
@@ -210,9 +227,13 @@ pub fn wolverine_batch_mul_public_output_verify<C: AbstractChannel>(
     a: &[BeDOZaReceiver],
     b: &[BeDOZaReceiver],
     public_c: &[FE],
+    vole_receiver: &mut BufferedVoleReceiver,
     channel: &mut C,
 ) -> Result<()> {
     check_lengths_mixed(a, b, public_c, "wolverine_batch_mul_public_output_verify")?;
+    let dummy_x = vole_receiver
+        .random_auth(channel, 1)
+        .map_err(|e| anyhow!("failed to authenticate Wolverine public-output dummy x: {e}"))?[0];
 
     let delta = a[0].key();
     for (i, (a_i, b_i)) in a.iter().zip(b.iter()).enumerate() {
@@ -222,6 +243,10 @@ pub fn wolverine_batch_mul_public_output_verify<C: AbstractChannel>(
             i
         );
     }
+    ensure!(
+        dummy_x.key() == delta,
+        "wolverine_batch_mul_public_output_verify: dummy key mismatch"
+    );
 
     let mut rng = rand::rng();
     let seed: [u8; 32] = rng.random::<[u8; 32]>();
@@ -233,12 +258,14 @@ pub fn wolverine_batch_mul_public_output_verify<C: AbstractChannel>(
         .map_err(|e| anyhow!("failed to flush Wolverine public-output seed: {}", e))?;
 
     let mut seeded_rng = StdRng::from_seed(seed);
-    let coeffs = random_fe_vec_from_rng(&mut seeded_rng, a.len())?;
+    let coeffs = random_fe_vec_from_rng(&mut seeded_rng, a.len() + 1)?;
+    let (mul_coeffs, dummy_coeffs) = coeffs.split_at(a.len());
+    let dummy_coeff = dummy_coeffs[0];
 
     let lambda_batch = receive_fe_abstract(channel)?;
     let mu_batch = receive_fe_abstract(channel)?;
 
-    let l_batch = coeffs
+    let l_batch_mul = mul_coeffs
         .iter()
         .zip(a.iter().zip(b.iter()).zip(public_c.iter()))
         .map(|(&eta_i, ((a_i, b_i), &c_i))| {
@@ -246,6 +273,7 @@ pub fn wolverine_batch_mul_public_output_verify<C: AbstractChannel>(
             eta_i * l_i
         })
         .fold(FE::zero(), |acc, term| acc + term);
+    let l_batch = l_batch_mul + dummy_coeff * dummy_x.tag();
 
     ensure!(
         l_batch == delta * lambda_batch + mu_batch,

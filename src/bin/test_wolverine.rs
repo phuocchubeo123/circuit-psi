@@ -8,6 +8,8 @@ use circuit_psi::{
     },
     scalar_field::fq,
     tcp_channel::{connect_with_retry, listen_to},
+    vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
+    vole_triple::LPN21,
 };
 use std::{
     net::TcpListener,
@@ -18,13 +20,11 @@ type SenderBatch = (
     Vec<BeDOZaSender>,
     Vec<BeDOZaSender>,
     Vec<BeDOZaSender>,
-    BeDOZaSender,
 );
 type ReceiverBatch = (
     Vec<BeDOZaReceiver>,
     Vec<BeDOZaReceiver>,
     Vec<BeDOZaReceiver>,
-    BeDOZaReceiver,
 );
 
 fn make_batch(delta_1: FE, gates: usize, tamper_one_gate: bool) -> (SenderBatch, ReceiverBatch) {
@@ -57,19 +57,14 @@ fn make_batch(delta_1: FE, gates: usize, tamper_one_gate: bool) -> (SenderBatch,
         c_receiver.push(BeDOZaReceiver::new(delta_1 * c + pad_c, delta_1, false));
     }
 
-    let dummy_x = fq(1234567);
-    let dummy_pad = fq(7654321);
-    let dummy_sender = BeDOZaSender::new(dummy_x, dummy_pad, false);
-    let dummy_receiver = BeDOZaReceiver::new(delta_1 * dummy_x + dummy_pad, delta_1, false);
-
     (
-        (a_sender, b_sender, c_sender, dummy_sender),
-        (a_receiver, b_receiver, c_receiver, dummy_receiver),
+        (a_sender, b_sender, c_sender),
+        (a_receiver, b_receiver, c_receiver),
     )
 }
 
 fn run_round(delta_1: FE, gates: usize, tamper_one_gate: bool, expect_ok: bool) -> Result<()> {
-    let ((a_s, b_s, c_s, dummy_s), (a_r, b_r, c_r, dummy_r)) =
+    let ((a_s, b_s, c_s), (a_r, b_r, c_r)) =
         make_batch(delta_1, gates, tamper_one_gate);
 
     let listener = TcpListener::bind("127.0.0.1:0").context("bind localhost listener")?;
@@ -82,12 +77,17 @@ fn run_round(delta_1: FE, gates: usize, tamper_one_gate: bool, expect_ok: bool) 
     let prover_addr = addr_str.clone();
     let prover_handle = thread::spawn(move || -> Result<()> {
         let mut channel = listen_to(&prover_addr)?;
-        wolverine_batch_mul_prove(&a_s, &b_s, &c_s, &dummy_s, &mut channel)
+        let mut vole_sender = BufferedVoleSender::init(&mut channel, LPN21)
+            .context("prover failed to init buffered VOLE sender")?;
+        wolverine_batch_mul_prove(&a_s, &b_s, &c_s, &mut vole_sender, &mut channel)
             .context("prover failed in Wolverine batch-mul proof")
     });
 
     let mut channel = connect_with_retry(&addr_str)?;
-    let verifier_result = wolverine_batch_mul_verify(&a_r, &b_r, &c_r, &dummy_r, &mut channel);
+    let mut vole_receiver = BufferedVoleReceiver::init(&mut channel, delta_1, LPN21)
+        .context("verifier failed to init buffered VOLE receiver")?;
+    let verifier_result =
+        wolverine_batch_mul_verify(&a_r, &b_r, &c_r, &mut vole_receiver, &mut channel);
 
     let prover_result = prover_handle.join().expect("prover thread panicked");
     prover_result?;
