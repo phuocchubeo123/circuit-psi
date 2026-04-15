@@ -69,7 +69,7 @@ fn open_bedoza_values<IO: AbstractChannel>(
         .zip(shares.iter())
         .enumerate()
     {
-        if key * value + pad != share.bedoza_receiver().tag() {
+        if key * value - pad != share.bedoza_receiver().tag() {
             bail!("BeDOZa opening tag verification failed at index {}", i);
         }
     }

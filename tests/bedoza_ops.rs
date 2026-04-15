@@ -8,7 +8,7 @@ fn fe(n: u8) -> FE {
 
 fn make_authenticated_share(value: FE, pad: FE, key: FE, side: bool) -> BeDOZa {
     let sender = BeDOZaSender::new(value, pad, side);
-    let receiver = BeDOZaReceiver::new(key * value + pad, key, side);
+    let receiver = BeDOZaReceiver::new(key * value - pad, key, side);
     BeDOZa::new(sender, receiver)
 }
 
@@ -32,7 +32,7 @@ fn reconstruct_value(left: &BeDOZa, right: &BeDOZa) -> FE {
 
 fn assert_tag_checks(share: &BeDOZa) {
     let expected_tag =
-        share.bedoza_receiver().key() * share.bedoza_sender().val() + share.bedoza_sender().pad();
+        share.bedoza_receiver().key() * share.bedoza_sender().val() - share.bedoza_sender().pad();
     assert_eq!(share.bedoza_receiver().tag(), expected_tag);
 }
 

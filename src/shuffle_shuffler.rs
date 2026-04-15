@@ -4,10 +4,6 @@ use crate::{
         bedoza_sender::{linear_comb_sender, send_open_shares, BeDOZaSender},
         comm_util::receive_fe_vec,
         defines::{powers, random_fe_vec_from_rng, FE},
-        vole_auth::{
-            authenticate_batch_with_peer_key_receiver, authenticate_batch_with_peer_key_sender,
-            vole_share_product_receiver,
-        },
         wolverine::{
             wolverine_batch_mul_prove, wolverine_batch_mul_public_output_prove,
             wolverine_batch_mul_verify,
@@ -128,24 +124,6 @@ impl Shuffler {
         Ok(())
     }
 
-    fn receive_authenticated_batch(
-        &self,
-        expected_count: usize,
-        context: &str,
-        vole_receiver: &mut BufferedVoleReceiver,
-        channel: &mut SwankyChannel,
-    ) -> Result<Vec<BeDOZaReceiver>> {
-        let receiver_commitments = authenticate_batch_with_peer_key_receiver(
-            expected_count,
-            false,
-            self.delta_1,
-            vole_receiver,
-            channel,
-        )?;
-        ensure_receiver_component_key_is(&receiver_commitments, self.delta_1, context)?;
-        Ok(receiver_commitments)
-    }
-
     pub fn step2_vole_share_x_times_k1_and_authenticate(
         &self,
         authenticated_x_receiver: &[BeDOZaReceiver],
@@ -163,41 +141,53 @@ impl Shuffler {
 
         // 1) Get additive shares of x_i * k1 from product VOLE.
         let n = authenticated_x_receiver.len();
-        let v_values = vole_share_product_receiver(n, k1_mul_vole_receiver, channel)?;
+        let v_values: Vec<FE> = k1_mul_vole_receiver
+            .commit_auth(channel, n)
+            .map_err(|e| anyhow!("failed to materialize receiver VOLE outputs for product shares: {e}"))?
+            .into_iter()
+            .map(|r| r.tag())
+            .collect();
         let v0_value = k1_mul_vole_receiver
             .random_auth(channel, 1)
             .map_err(|e| anyhow!("step2 failed to sample random v0 share: {e}"))?[0]
             .tag();
 
         // 2) Receive inputer's authenticated u_i, x0 and u0 under delta_1.
-        let authenticated_u_receiver = authenticate_batch_with_peer_key_receiver(
-            n,
-            false,
-            self.delta_1,
-            auth_vole_receiver,
-            channel,
-        )?;
-        let authenticated_x0_receiver = authenticate_batch_with_peer_key_receiver(
-            1,
-            false,
-            self.delta_1,
-            auth_vole_receiver,
-            channel,
-        )?[0];
-        let authenticated_u0_receiver = authenticate_batch_with_peer_key_receiver(
-            1,
-            false,
-            self.delta_1,
-            auth_vole_receiver,
-            channel,
-        )?[0];
+        let authenticated_u_receiver: Vec<BeDOZaReceiver> = auth_vole_receiver
+            .commit_auth(channel, n)
+            .map_err(|e| anyhow!("failed to materialize receiver VOLE outputs: {e}"))?
+            .into_iter()
+            .map(|r| BeDOZaReceiver::new(r.tag(), self.delta_1, false))
+            .collect();
+        let authenticated_x0_receiver = auth_vole_receiver
+            .commit_auth(channel, 1)
+            .map_err(|e| anyhow!("failed to materialize receiver VOLE outputs: {e}"))?
+            .into_iter()
+            .map(|r| BeDOZaReceiver::new(r.tag(), self.delta_1, false))
+            .next()
+            .expect("commit_auth(1) must return one item");
+        let authenticated_u0_receiver = auth_vole_receiver
+            .commit_auth(channel, 1)
+            .map_err(|e| anyhow!("failed to materialize receiver VOLE outputs: {e}"))?
+            .into_iter()
+            .map(|r| BeDOZaReceiver::new(r.tag(), self.delta_1, false))
+            .next()
+            .expect("commit_auth(1) must return one item");
 
         // 3) Send authenticated v0 and v_i under delta_0.
-        let authenticated_v0_sender =
-            authenticate_batch_with_peer_key_sender(&[v0_value], true, auth_vole_sender, channel)?
-                [0];
-        let authenticated_v_sender =
-            authenticate_batch_with_peer_key_sender(&v_values, true, auth_vole_sender, channel)?;
+        let authenticated_v0_sender = auth_vole_sender
+            .commit_auth(channel, &[v0_value])
+            .map_err(|e| anyhow!("failed to materialize sender VOLE inputs: {e}"))?
+            .into_iter()
+            .map(|s| BeDOZaSender::new(s.val(), s.pad(), true))
+            .next()
+            .expect("commit_auth(1) must return one item");
+        let authenticated_v_sender: Vec<BeDOZaSender> = auth_vole_sender
+            .commit_auth(channel, &v_values)
+            .map_err(|e| anyhow!("failed to materialize sender VOLE inputs: {e}"))?
+            .into_iter()
+            .map(|s| BeDOZaSender::new(s.val(), s.pad(), true))
+            .collect();
 
         // 4) Receive seed, open x/u linear combinations, and check x*k1 = u + v.
         let seed_raw = channel
@@ -247,7 +237,7 @@ impl Shuffler {
     pub fn step0_authenticate_oprf_key_and_xi_and_ri_and_send_pi<RNG: Rng>(
         &self,
         permutation: &[usize],
-        rng: &mut RNG,
+        _rng: &mut RNG,
         auth_vole_sender: &mut BufferedVoleSender,
         auth_vole_receiver: &mut BufferedVoleReceiver,
         channel: &mut SwankyChannel,
@@ -261,30 +251,51 @@ impl Shuffler {
         self.validate_permutation(permutation, "step0")?;
         let n = permutation.len();
 
-        // 0.1) Receive inputer's k0 authenticated under delta_1.
-        let inputer_k0_receiver = self.receive_authenticated_batch(
-            1,
+        // 0.1) Receive inputer's random-authenticated k0 under delta_1.
+        let inputer_k0_receiver = auth_vole_receiver
+            .random_auth(channel, 1)
+            .map_err(|e| anyhow!("failed to receive authenticated k0: {e}"))?
+            .into_iter()
+            .map(|r| BeDOZaReceiver::new(r.tag(), self.delta_1, false))
+            .next()
+            .expect("random_auth(1) must return one item");
+        ensure_receiver_component_key_is(
+            &[inputer_k0_receiver],
+            self.delta_1,
             "shuffler.step0 received k0 share",
-            auth_vole_receiver,
-            channel,
-        )?[0];
-        let k1 = random_fe_vec_from_rng(rng, 1)?[0];
-        let shuffler_k1_sender =
-            authenticate_batch_with_peer_key_sender(&[k1], true, auth_vole_sender, channel)?[0];
+        )?;
+        let shuffler_k1_sender = auth_vole_sender
+            .random_auth(channel, 1)
+            .map_err(|e| anyhow!("failed to authenticate k1: {e}"))?
+            .into_iter()
+            .map(|s| BeDOZaSender::new(s.val(), s.pad(), true))
+            .next()
+            .expect("random_auth(1) must return one item");
+        let k1 = shuffler_k1_sender.val();
         let shuffler_key_share = BeDOZa::new(shuffler_k1_sender, inputer_k0_receiver);
 
         // 0.2) Receive authenticated x_i and r_i from inputer under delta_1.
-        let authenticated_inputs = self.receive_authenticated_batch(
-            n,
+        let authenticated_inputs: Vec<BeDOZaReceiver> = auth_vole_receiver
+            .commit_auth(channel, n)
+            .map_err(|e| anyhow!("failed to materialize receiver VOLE outputs: {e}"))?
+            .into_iter()
+            .map(|r| BeDOZaReceiver::new(r.tag(), self.delta_1, false))
+            .collect();
+        ensure_receiver_component_key_is(
+            &authenticated_inputs,
+            self.delta_1,
             "shuffler.step0 received x_i commitments",
-            auth_vole_receiver,
-            channel,
         )?;
-        let authenticated_ri_receiver = self.receive_authenticated_batch(
-            n,
+        let authenticated_ri_receiver: Vec<BeDOZaReceiver> = auth_vole_receiver
+            .random_auth(channel, n)
+            .map_err(|e| anyhow!("failed to receive authenticated r_i values: {e}"))?
+            .into_iter()
+            .map(|r| BeDOZaReceiver::new(r.tag(), self.delta_1, false))
+            .collect();
+        ensure_receiver_component_key_is(
+            &authenticated_ri_receiver,
+            self.delta_1,
             "shuffler.step0 received r_i commitments",
-            auth_vole_receiver,
-            channel,
         )?;
 
         // 0.3) Authenticate permutation values under inputer key delta_0.
@@ -292,12 +303,12 @@ impl Shuffler {
             .iter()
             .map(|&idx| FE::from(idx as u64))
             .collect();
-        let authenticated_pi_sender = authenticate_batch_with_peer_key_sender(
-            &permutation_fe,
-            true,
-            auth_vole_sender,
-            channel,
-        )?;
+        let authenticated_pi_sender: Vec<BeDOZaSender> = auth_vole_sender
+            .commit_auth(channel, &permutation_fe)
+            .map_err(|e| anyhow!("failed to materialize sender VOLE inputs: {e}"))?
+            .into_iter()
+            .map(|s| BeDOZaSender::new(s.val(), s.pad(), true))
+            .collect();
 
         Ok((
             shuffler_key_share,
@@ -333,11 +344,16 @@ impl Shuffler {
             .iter()
             .map(|x| *x + k0_receiver)
             .collect();
-        let product_commitments = self.receive_authenticated_batch(
-            authenticated_inputs.len(),
+        let product_commitments: Vec<BeDOZaReceiver> = auth_vole_receiver
+            .commit_auth(channel, authenticated_inputs.len())
+            .map_err(|e| anyhow!("failed to materialize receiver VOLE outputs: {e}"))?
+            .into_iter()
+            .map(|r| BeDOZaReceiver::new(r.tag(), self.delta_1, false))
+            .collect();
+        ensure_receiver_component_key_is(
+            &product_commitments,
+            self.delta_1,
             "shuffler.step1 received r_i(x_i+k0) commitments",
-            auth_vole_receiver,
-            channel,
         )?;
 
         wolverine_batch_mul_verify(
@@ -398,12 +414,12 @@ impl Shuffler {
             .collect();
 
         // 3.2) Reauthenticate r_i(x_i+k) under inputer key delta_0, with sacrifice check.
-        let authenticated_r_x_k_sender = authenticate_batch_with_peer_key_sender(
-            &r_x_k_values,
-            true,
-            auth_vole_sender,
-            channel,
-        )?;
+        let authenticated_r_x_k_sender: Vec<BeDOZaSender> = auth_vole_sender
+            .commit_auth(channel, &r_x_k_values)
+            .map_err(|e| anyhow!("failed to materialize sender VOLE inputs: {e}"))?
+            .into_iter()
+            .map(|s| BeDOZaSender::new(s.val(), s.pad(), true))
+            .collect();
         let seed: [u8; 32] = rng.random::<[u8; 32]>();
         channel
             .send(&seed)
@@ -421,12 +437,12 @@ impl Shuffler {
         // 3.3) Authenticate inverses and prove r_i(x_i+k) * inv_i = 1 in batch.
         let inverse_values =
             batch_invert_nonzero(&r_x_k_values, "step3 failed to batch-invert r(x+k)")?;
-        let authenticated_inverse_sender = authenticate_batch_with_peer_key_sender(
-            &inverse_values,
-            true,
-            auth_vole_sender,
-            channel,
-        )?;
+        let authenticated_inverse_sender: Vec<BeDOZaSender> = auth_vole_sender
+            .commit_auth(channel, &inverse_values)
+            .map_err(|e| anyhow!("failed to materialize sender VOLE inputs: {e}"))?
+            .into_iter()
+            .map(|s| BeDOZaSender::new(s.val(), s.pad(), true))
+            .collect();
         let public_ones = vec![FE::one(); authenticated_r_x_k_sender.len()];
         wolverine_batch_mul_public_output_prove(
             &authenticated_r_x_k_sender,
@@ -537,12 +553,12 @@ impl Shuffler {
 
         let x_powers = powers(x, permutation.len());
         let permuted_x_powers = checked_permute(&x_powers, permutation)?;
-        let authenticated_x_powers_sender = authenticate_batch_with_peer_key_sender(
-            &permuted_x_powers,
-            true,
-            auth_vole_sender,
-            channel,
-        )?;
+        let authenticated_x_powers_sender: Vec<BeDOZaSender> = auth_vole_sender
+            .commit_auth(channel, &permuted_x_powers)
+            .map_err(|e| anyhow!("failed to materialize sender VOLE inputs: {e}"))?
+            .into_iter()
+            .map(|s| BeDOZaSender::new(s.val(), s.pad(), true))
+            .collect();
 
         // 5.2) Receive alpha/beta/gamma and prove running-product identity.
         let challenges = receive_fe_vec(channel)
@@ -562,8 +578,12 @@ impl Shuffler {
             .zip(permuted_x_powers.iter())
             .map(|(pi_i, x_pi_i)| alpha + beta * pi_i.val() + gamma * *x_pi_i)
             .collect();
-        let authenticated_u_sender =
-            authenticate_batch_with_peer_key_sender(&u_values, true, auth_vole_sender, channel)?;
+        let authenticated_u_sender: Vec<BeDOZaSender> = auth_vole_sender
+            .commit_auth(channel, &u_values)
+            .map_err(|e| anyhow!("failed to materialize sender VOLE inputs: {e}"))?
+            .into_iter()
+            .map(|s| BeDOZaSender::new(s.val(), s.pad(), true))
+            .collect();
 
         // p_0 = u_0 * u_1, p_i = p_{i-1} * u_{i+1}.
         let mut running = u_values[0];
@@ -575,12 +595,12 @@ impl Shuffler {
                 running
             })
             .collect();
-        let authenticated_running_products = authenticate_batch_with_peer_key_sender(
-            &running_products,
-            true,
-            auth_vole_sender,
-            channel,
-        )?;
+        let authenticated_running_products: Vec<BeDOZaSender> = auth_vole_sender
+            .commit_auth(channel, &running_products)
+            .map_err(|e| anyhow!("failed to materialize sender VOLE inputs: {e}"))?
+            .into_iter()
+            .map(|s| BeDOZaSender::new(s.val(), s.pad(), true))
+            .collect();
 
         let mut u_chain_left = Vec::with_capacity(n - 1);
         u_chain_left.push(authenticated_u_sender[0]);

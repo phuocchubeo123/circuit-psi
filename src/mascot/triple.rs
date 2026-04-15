@@ -1,9 +1,6 @@
 use crate::{
     bedoza::{
         BeDOZa, BeDOZaTriple, bedoza_receiver::BeDOZaReceiver, bedoza_sender::BeDOZaSender,
-        vole_auth::{
-            authenticate_batch_with_peer_key_receiver, authenticate_batch_with_peer_key_sender,
-        },
     },
     comm_util::{receive_fe, send_fe},
     pre_ot::OTPre,
@@ -580,38 +577,32 @@ fn authenticate_triples_to_bedoza<IO: AbstractChannel>(
 
     let (sender_shares, receiver_shares): (Vec<BeDOZaSender>, Vec<BeDOZaReceiver>) = if sender_first
     {
-        let sender = authenticate_batch_with_peer_key_sender(
-            &values,
-            sender_owner_side,
-            auth_vole_sender,
-            io,
-        )
-        .expect("failed to authenticate local values with VOLE sender");
-        let receiver = authenticate_batch_with_peer_key_receiver(
-            values.len(),
-            receiver_owner_side,
-            local_key,
-            auth_vole_receiver,
-            io,
-        )
-        .expect("failed to receive authenticated peer values with VOLE receiver");
+        let sender = auth_vole_sender
+            .commit_auth(io, &values)
+            .expect("failed to authenticate local values with VOLE sender")
+            .into_iter()
+            .map(|s| BeDOZaSender::new(s.val(), s.pad(), sender_owner_side))
+            .collect();
+        let receiver = auth_vole_receiver
+            .commit_auth(io, values.len())
+            .expect("failed to receive authenticated peer values with VOLE receiver")
+            .into_iter()
+            .map(|r| BeDOZaReceiver::new(r.tag(), local_key, receiver_owner_side))
+            .collect();
         (sender, receiver)
     } else {
-        let receiver = authenticate_batch_with_peer_key_receiver(
-            values.len(),
-            receiver_owner_side,
-            local_key,
-            auth_vole_receiver,
-            io,
-        )
-        .expect("failed to receive authenticated peer values with VOLE receiver");
-        let sender = authenticate_batch_with_peer_key_sender(
-            &values,
-            sender_owner_side,
-            auth_vole_sender,
-            io,
-        )
-        .expect("failed to authenticate local values with VOLE sender");
+        let receiver = auth_vole_receiver
+            .commit_auth(io, values.len())
+            .expect("failed to receive authenticated peer values with VOLE receiver")
+            .into_iter()
+            .map(|r| BeDOZaReceiver::new(r.tag(), local_key, receiver_owner_side))
+            .collect();
+        let sender = auth_vole_sender
+            .commit_auth(io, &values)
+            .expect("failed to authenticate local values with VOLE sender")
+            .into_iter()
+            .map(|s| BeDOZaSender::new(s.val(), s.pad(), sender_owner_side))
+            .collect();
         (sender, receiver)
     };
 
@@ -717,7 +708,7 @@ fn open_bedoza_values<IO: AbstractChannel>(
         .enumerate()
     {
         assert_eq!(
-            key * value + pad,
+            key * value - pad,
             share.bedoza_receiver().tag(),
             "BeDOZa opening tag verification failed at index {i}"
         );

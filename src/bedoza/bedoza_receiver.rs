@@ -11,7 +11,7 @@ use std::ops::{Add, Mul, Sub};
 
 #[derive(Clone, Copy)]
 pub struct BeDOZaReceiver {
-    tag: FE, // We have tag = share * key + pad, where share and pad is possessed by the BeDOZaSender
+    tag: FE, // We have share * key = tag + pad, where share and pad are possessed by the BeDOZaSender
     key: FE,
     side: bool, // Either 0 or 1. This variable indicate which side's share is this authenticated share. Remember in BeDOZa, both shares of a single value is authenticated.
 }
@@ -64,7 +64,7 @@ pub fn receive_open_shares(
     let received_tags: Vec<FE> = values
         .iter()
         .zip(pads.iter())
-        .map(|(value, pad)| key * value + pad)
+        .map(|(value, pad)| key * value - pad)
         .collect();
     for (i, (&received_tag, bedoza_receiver)) in received_tags
         .iter()

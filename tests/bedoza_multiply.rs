@@ -27,13 +27,13 @@ fn make_cross_party_share(v0: FE, p0: FE, v1: FE, p1: FE, key0: FE, key1: FE) ->
     // Party 0 keeps side-0 sender and side-1 receiver (authenticates party 1 sender).
     let party0 = BeDOZa::new(
         BeDOZaSender::new(v0, p0, false),
-        BeDOZaReceiver::new(key0 * v1 + p1, key0, true),
+        BeDOZaReceiver::new(key0 * v1 - p1, key0, true),
     );
 
     // Party 1 keeps side-1 sender and side-0 receiver (authenticates party 0 sender).
     let party1 = BeDOZa::new(
         BeDOZaSender::new(v1, p1, true),
-        BeDOZaReceiver::new(key1 * v0 + p0, key1, false),
+        BeDOZaReceiver::new(key1 * v0 - p0, key1, false),
     );
 
     (party0, party1)
@@ -179,7 +179,7 @@ fn run_batch_with_peer_sender(
 
 fn assert_cross_authenticated(local: &BeDOZa, remote: &BeDOZa) {
     let expected =
-        local.bedoza_receiver().key() * remote.bedoza_sender().val() + remote.bedoza_sender().pad();
+        local.bedoza_receiver().key() * remote.bedoza_sender().val() - remote.bedoza_sender().pad();
     assert_eq!(local.bedoza_receiver().tag(), expected);
 }
 

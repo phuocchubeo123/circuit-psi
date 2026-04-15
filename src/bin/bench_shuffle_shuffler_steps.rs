@@ -1,8 +1,5 @@
 use anyhow::{Context, Result, anyhow, ensure};
 use circuit_psi::{
-    bedoza::{
-        defines::{FE, random_fe_vec_from_rng},
-    },
     scalar_field::fq,
     shuffle_shuffler::Shuffler,
     tcp_channel::listen_to,
@@ -11,10 +8,8 @@ use circuit_psi::{
 };
 use rand::{Rng, RngExt, SeedableRng, rngs::StdRng};
 use std::time::Instant;
-use swanky_channel_legacy::AesRng;
 
 const SWANKY_ADDR: &str = "127.0.0.1:23000";
-const TCP_ADDR: &str = "127.0.0.1:23001";
 const SHUFFLER_RNG_SEED: [u8; 32] = [42u8; 32];
 
 fn random_permutation(n: usize, rng: &mut impl Rng) -> Vec<usize> {
@@ -47,222 +42,117 @@ fn main() -> Result<()> {
     println!("role=shuffler_steps n={}", n);
     let total_start = Instant::now();
 
-    let delta_0 = fq(97);
     let delta_1 = fq(131);
-    let k1_prime = fq(193);
 
-    let mut preview_rng = StdRng::from_seed(SHUFFLER_RNG_SEED);
-    let k1_preview = random_fe_vec_from_rng(&mut preview_rng, 1)?[0];
-
-    let _ = (delta_0, delta_1, k1_prime);
-
-    let mut swanky = timed("listen_to", || {
+    let mut channel = timed("listen_to", || {
         listen_to(SWANKY_ADDR).context("listen swanky channel")
     })?;
-    let mut tcp = timed("listen_tcp", || {
-        listen_to(TCP_ADDR).context("listen tcp channel")
-    })?;
 
-    let mut vole_rng = AesRng::new();
     let mut auth_vole_receiver = timed("init_auth_vole_receiver", || {
-        BufferedVoleReceiver::init(
-            &mut swanky,
-            -delta_1,
-            LPN21,
-        )
-        .map_err(|e| anyhow!("init auth receiver VOLE failed: {}", e))
+        BufferedVoleReceiver::init(&mut channel, -delta_1, LPN21)
+            .map_err(|e| anyhow!("init auth receiver VOLE failed: {}", e))
     })?;
     let mut auth_vole_sender = timed("init_auth_vole_sender", || {
-        BufferedVoleSender::init(&mut swanky, LPN21)
+        BufferedVoleSender::init(&mut channel, LPN21)
             .map_err(|e| anyhow!("init auth sender VOLE failed: {}", e))
     })?;
-
-    let mut protocol_rng = StdRng::from_seed(SHUFFLER_RNG_SEED);
     let shuffler = Shuffler::new(delta_1);
-
-    let (k1, shuffler_key_share) = timed("step0", || {
-        shuffler.step0_sample_and_authenticate_oprf_key_share(
-            &mut protocol_rng,
-            &mut auth_vole_sender,
-            &mut auth_vole_receiver,
-            &mut swanky,
-        )
-    })?;
-    ensure!(
-        k1 == k1_preview,
-        "deterministic seed mismatch for k1 preview"
-    );
-
-    let mut k1_mul_vole_receiver = timed("init_k1_mul_vole_receiver", || {
-        BufferedVoleReceiver::init(
-            &mut swanky,
-            -k1,
-            LPN21,
-        )
-        .map_err(|e| anyhow!("init k1 mul receiver VOLE failed: {}", e))
-    })?;
-    let mut k1_prime_mul_vole_receiver =
-        timed("init_k1_prime_mul_vole_receiver", || {
-            BufferedVoleReceiver::init(
-                &mut swanky,
-                -k1_prime,
-                LPN21,
-            )
-            .map_err(|e| anyhow!("init k1' mul receiver VOLE failed: {}", e))
-        })?;
-
+    let mut protocol_rng = StdRng::from_seed(SHUFFLER_RNG_SEED);
     let mut perm_rng = rand::rng();
+
     let permutation = timed("generate_permutation", || {
         Ok(random_permutation(n, &mut perm_rng))
     })?;
 
-    let authenticated_inputs = timed("step1", || {
-        shuffler.step1_inputer_commits_inputs(n, &mut auth_vole_receiver, &mut swanky)
+    let (
+        shuffler_key_share,
+        k1,
+        authenticated_inputs,
+        authenticated_ri_receiver,
+        authenticated_pi_sender,
+    ) = timed("step0", || {
+        shuffler.step0_authenticate_oprf_key_and_xi_and_ri_and_send_pi(
+            &permutation,
+            &mut protocol_rng,
+            &mut auth_vole_sender,
+            &mut auth_vole_receiver,
+            &mut channel,
+        )
     })?;
-    let authenticated_ri_receiver = timed("step2", || {
-        shuffler.step2_inputer_commits_random_values(n, &mut auth_vole_receiver, &mut swanky)
+
+    let mut k1_mul_vole_receiver = timed("init_k1_mul_vole_receiver", || {
+        BufferedVoleReceiver::init(&mut channel, -k1, LPN21)
+            .map_err(|e| anyhow!("init k1 mul receiver VOLE failed: {}", e))
     })?;
-    let authenticated_r_x_plus_k0_receiver = timed("step3", || {
-        shuffler.step3_inputer_authenticates_r_times_x_plus_k0_and_proves(
+
+    let authenticated_r_x_plus_k0_receiver = timed("step1", || {
+        shuffler.step1_inputer_authenticates_r_times_x_plus_k0_and_verifies(
             &authenticated_inputs,
             &authenticated_ri_receiver,
             &shuffler_key_share,
             &mut auth_vole_receiver,
-            &mut swanky,
+            &mut channel,
         )
     })?;
-    let (v_values, authenticated_u_receiver, authenticated_v_sender) =
-        timed("step4", || {
-            shuffler.step4_vole_share_x_times_k1_and_authenticate(
-                n,
-                &mut auth_vole_receiver,
-                &mut auth_vole_sender,
-                &mut k1_mul_vole_receiver,
-                &mut swanky,
-            )
-        })?;
-    timed("step5", || {
-        shuffler.step5_verify_random_linear_combination_for_uv_consistency(
+
+    let (v_values, authenticated_u_receiver, authenticated_v_sender) = timed("step2", || {
+        shuffler.step2_vole_share_x_times_k1_and_authenticate(
             &authenticated_inputs,
-            &authenticated_u_receiver,
-            &v_values,
-            k1,
-            &mut swanky,
-        )
-    })?;
-    timed("step6", || {
-        shuffler.step6_prove_authenticated_v_linear_combination_consistency(
-            &authenticated_inputs,
-            &authenticated_u_receiver,
-            &authenticated_v_sender,
             shuffler_key_share.bedoza_sender(),
-            k1_prime,
+            k1,
             &mut auth_vole_receiver,
             &mut auth_vole_sender,
-            &mut k1_prime_mul_vole_receiver,
-            &mut swanky,
+            &mut k1_mul_vole_receiver,
+            &mut channel,
         )
     })?;
-    let r_x_k_values = timed("step7", || {
-        shuffler.step7_receive_ri_x_plus_k0_plus_ui_and_reconstruct_ri_x_plus_k(
+
+    let (inverse_values, authenticated_inverse_sender) = timed("step3", || {
+        shuffler.step3_receive_ri_x_plus_k0_plus_ui_and_receive_reauthenticate_and_inverse(
             &authenticated_r_x_plus_k0_receiver,
             &authenticated_u_receiver,
             &v_values,
-            &mut swanky,
-        )
-    })?;
-    let authenticated_r_x_k_sender = timed("step8", || {
-        shuffler.step8_reauthenticate_ri_x_plus_k_and_prove_consistency(
-            &r_x_k_values,
             &authenticated_v_sender,
             &mut auth_vole_sender,
             &mut protocol_rng,
-            &mut swanky,
+            &mut channel,
         )
     })?;
-    let (inverse_values, authenticated_inverse_sender) = timed("step9", || {
-        shuffler.step9_authenticate_inverses_and_prove(
-            &authenticated_r_x_k_sender,
-            &mut auth_vole_sender,
-            &mut swanky,
+
+    let g_ri = timed("step4", || {
+        shuffler.step4_receive_g_ri_and_verify_pad_consistency_proof(
+            &authenticated_ri_receiver,
+            &mut channel,
         )
     })?;
-    let g_ri = timed("step10", || {
-        shuffler
-            .step10_receive_g_ri_and_verify_pad_consistency(&authenticated_ri_receiver, &mut tcp)
-    })?;
-    let authenticated_pi_sender = timed("step11", || {
-        shuffler.step11_authenticate_permutation_values(
+
+    let (x, authenticated_x_powers_sender) = timed("step5", || {
+        shuffler.step5_receive_challenge_and_authenticate_xpi_and_prove_running_product(
             &permutation,
-            &mut auth_vole_sender,
-            &mut swanky,
-        )
-    })?;
-    let (x_challenge, _permuted_x_powers, authenticated_x_powers_sender) =
-        timed("step12", || {
-            shuffler.step12_receive_challenge_and_authenticate_x_powers(
-                &permutation,
-                &mut auth_vole_sender,
-                &mut swanky,
-            )
-        })?;
-    let (
-        _permuted_inverse_values,
-        _product_values,
-        _authenticated_permuted_inverse_sender,
-        authenticated_products_sender,
-    ) = timed("step13", || {
-        shuffler.step13_authenticate_xpi_times_inverse_and_prove(
-            &permutation,
-            &authenticated_x_powers_sender,
-            &authenticated_inverse_sender,
-            &mut auth_vole_sender,
-            &mut swanky,
-        )
-    })?;
-    timed("step14", || {
-        shuffler.step14_prove_shuffle_product_identity(
-            x_challenge,
             &authenticated_pi_sender,
-            &authenticated_products_sender,
-            &authenticated_inverse_sender,
-            &authenticated_x_powers_sender,
             &mut auth_vole_sender,
-            &mut swanky,
+            &mut channel,
         )
     })?;
-    let shuffled = timed("step15", || {
-        shuffler.step15_send_shuffled_oprf_points(&permutation, &g_ri, &inverse_values, &mut tcp)
-    })?;
-    let opened_left_product = timed("step16", || {
-        shuffler.step16_open_left_oprf_product_and_pad_proof(
+
+    let shuffled = timed("step6", || {
+        shuffler.step6_send_shuffled_oprf_points_and_open_and_verify_products(
+            &permutation,
             &g_ri,
+            &inverse_values,
             &authenticated_inverse_sender,
-            x_challenge,
-            &mut tcp,
-        )
-    })?;
-    let opened_right_product = timed("step17", || {
-        shuffler.step17_open_right_oprf_product_and_pad_proof(
-            &shuffled,
+            x,
             &authenticated_x_powers_sender,
-            &mut tcp,
+            &mut channel,
         )
-    })?;
-    timed("step18", || {
-        shuffler
-            .step18_verify_opened_oprf_products_match(&opened_left_product, &opened_right_product)
     })?;
 
     let total_ms = total_start.elapsed().as_millis();
-
     println!("timing_ms total={}", total_ms);
     println!(
-        "bytes swanky_sent={} swanky_recv={} tcp_sent={} tcp_recv={}",
-        swanky.bytes_sent(),
-        swanky.bytes_received(),
-        tcp.bytes_sent(),
-        tcp.bytes_received()
+        "bytes swanky_sent={} swanky_recv={}",
+        channel.bytes_sent(),
+        channel.bytes_received()
     );
     println!("output_count={}", shuffled.len());
 

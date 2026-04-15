@@ -73,14 +73,14 @@ pub fn wolverine_batch_mul_prove<C: AbstractChannel>(
     let (mul_coeffs, dummy_coeffs) = coeffs.split_at(a.len());
     let dummy_coeff = dummy_coeffs[0];
 
-    // With v_x = delta * x + pad_x, set u_x = -pad_x.
-    // lambda_i = u_c - u_a * b - u_b * a = -pad_c + pad_a * b + pad_b * a
-    // mu_i = u_a * u_b = pad_a * pad_b
+    // With t_x = delta * x - pad_x, we have
+    // t_a * t_b - delta * t_c = delta * (pad_c - pad_a * b - pad_b * a) + pad_a * pad_b
+    // whenever c = a * b.
     let lambda_batch_mul = mul_coeffs
         .iter()
         .zip(a.iter().zip(b.iter()).zip(c.iter()))
         .map(|(&eta_i, ((a_i, b_i), c_i))| {
-            let lambda_i = -c_i.pad() + a_i.pad() * b_i.val() + b_i.pad() * a_i.val();
+            let lambda_i = c_i.pad() - a_i.pad() * b_i.val() - b_i.pad() * a_i.val();
             eta_i * lambda_i
         })
         .fold(FE::zero(), |acc, term| acc + term);
@@ -91,9 +91,8 @@ pub fn wolverine_batch_mul_prove<C: AbstractChannel>(
         .map(|(&eta_i, (a_i, b_i))| eta_i * (a_i.pad() * b_i.pad()))
         .fold(FE::zero(), |acc, term| acc + term);
 
-    // Dummy linear relation: v = x * delta_1 - u.
-    // In our representation v = x * delta_1 + pad and u = -pad,
-    // so lambda_dummy = x and mu_dummy = -u = pad.
+    // Dummy linear relation: t = delta * x - pad.
+    // This contributes delta * x + pad to the checker, so lambda_dummy = x and mu_dummy = pad.
     let lambda_batch = lambda_batch_mul + dummy_coeff * dummy_x.val();
     let mu_batch = mu_batch_mul + dummy_coeff * dummy_x.pad();
 
@@ -194,14 +193,14 @@ pub fn wolverine_batch_mul_public_output_prove<C: AbstractChannel>(
     let (mul_coeffs, dummy_coeffs) = coeffs.split_at(a.len());
     let dummy_coeff = dummy_coeffs[0];
 
-    // For v_a = delta*a + pad_a, v_b = delta*b + pad_b and c public:
-    // v_a*v_b - delta^2*c = delta*(pad_a*b + pad_b*a) + pad_a*pad_b
+    // For t_a = delta*a - pad_a, t_b = delta*b - pad_b and c public:
+    // t_a*t_b - delta^2*c = delta*(-pad_a*b - pad_b*a) + pad_a*pad_b
     // whenever a*b = c.
     let lambda_batch_mul = mul_coeffs
         .iter()
         .zip(a.iter().zip(b.iter()))
         .map(|(&eta_i, (a_i, b_i))| {
-            let lambda_i = a_i.pad() * b_i.val() + b_i.pad() * a_i.val();
+            let lambda_i = -(a_i.pad() * b_i.val() + b_i.pad() * a_i.val());
             eta_i * lambda_i
         })
         .fold(FE::zero(), |acc, term| acc + term);

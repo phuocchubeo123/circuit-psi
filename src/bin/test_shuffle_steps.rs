@@ -30,7 +30,7 @@ fn make_base_voles(key: FE, count: usize, offset: u64) -> (Vec<SenderMac>, Vec<R
         let x = fq(idx + 1);
         let beta = fq(3 * idx + 7);
         sender.push(BeDOZaSender::new(x, beta, false));
-        receiver.push(BeDOZaReceiver::new(x * key + beta, key, false));
+        receiver.push(BeDOZaReceiver::new(x * key - beta, key, false));
     }
     (sender, receiver)
 }

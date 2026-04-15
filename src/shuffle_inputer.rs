@@ -40,15 +40,15 @@ impl Inputer {
         vole_receiver: &mut BufferedVoleReceiver,
         channel: &mut SwankyChannel,
     ) -> Result<(BeDOZa, Vec<BeDOZaSender>, Vec<BeDOZaSender>, Vec<BeDOZaReceiver>)> {
-        // Inputer samples k0, authenticates it under shuffler key delta_1, then receives
-        // shuffler's k1 authenticated under inputer key delta_0.
+        // Inputer receives both authenticated key shares from paired random_auth calls:
+        // its own k0 as sender material and shuffler's k1 as receiver material.
         let inputer_k0_sender = vole_sender.random_auth(channel, 1).map_err(|e| anyhow!("Failed to authenticate k0: {e}"))?[0];
         let shuffler_k1_receiver = vole_receiver.random_auth(channel, 1).map_err(|e| anyhow!("Failed to receive authenticated k1: {e}"))?[0];
 
         // Inputer commits its local input values with VOLE under the shuffler's key delta_1.
         let authenticated_xis = vole_sender.commit_auth(channel, vals).map_err(|e| anyhow!("Failed to authenticate input values: {e}"))?;
 
-        // Inputer gets authenticated random values 
+        // Inputer gets authenticated random values without additional network traffic.
         let authenticated_ris = vole_sender.random_auth(channel, vals.len())
             .map_err(|e| anyhow!("Failed to authenticate random values: {e}"))?;
 
