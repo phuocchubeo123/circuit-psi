@@ -44,7 +44,7 @@ impl BufferedVoleSender {
             .extend(channel, &mut y, &mut z, additional, &mut comm);
 
         for i in 0..additional {
-            self.random_buffer.push_back(BeDOZaSender::new(-z[i], -y[i], false));
+            self.random_buffer.push_back(BeDOZaSender::new(z[i], y[i], false));
         }
         Ok(additional)
     }
@@ -90,9 +90,9 @@ impl BufferedVoleSender {
             let random = self.random_buffer.pop_front().expect("checked capacity");
             let r = random.val();
             let beta = random.pad();
-            let correction = -x - r;
+            let correction = x - r;
             encoded.extend_from_slice(&correction.to_bytes_le());
-            out.push(BeDOZaSender::new(x, -beta, false));
+            out.push(BeDOZaSender::new(x, beta, false));
         }
 
         channel.write_bytes(&encoded)?;
@@ -202,8 +202,8 @@ impl BufferedVoleReceiver {
             let correction = FE::from_bytes_le(&bytes).map_err(|e| eyre::eyre!("{e:?}"))?;
 
             let random = self.random_buffer.pop_front().expect("checked capacity");
-            let updated_tag = random.tag() - correction * self.delta;
-            out.push(BeDOZaReceiver::new(-updated_tag, self.delta, false));
+            let updated_tag = random.tag() + correction * self.delta;
+            out.push(BeDOZaReceiver::new(updated_tag, self.delta, false));
         }
         Ok(out)
     }

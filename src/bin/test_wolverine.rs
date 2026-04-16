@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, anyhow, ensure};
 use circuit_psi::{
     bedoza::{
         bedoza_receiver::BeDOZaReceiver,
@@ -78,16 +78,19 @@ fn run_round(delta_1: FE, gates: usize, tamper_one_gate: bool, expect_ok: bool) 
     let prover_handle = thread::spawn(move || -> Result<()> {
         let mut channel = listen_to(&prover_addr)?;
         let mut vole_sender = BufferedVoleSender::init(&mut channel, LPN21)
-            .context("prover failed to init buffered VOLE sender")?;
+            .map_err(|e| anyhow!("prover failed to init buffered VOLE sender: {}", e))?;
         wolverine_batch_mul_prove(&a_s, &b_s, &c_s, &mut vole_sender, &mut channel)
             .context("prover failed in Wolverine batch-mul proof")
     });
 
     let mut channel = connect_with_retry(&addr_str)?;
     let mut vole_receiver = BufferedVoleReceiver::init(&mut channel, delta_1, LPN21)
-        .context("verifier failed to init buffered VOLE receiver")?;
+        .map_err(|e| anyhow!("verifier failed to init buffered VOLE receiver: {}", e))?;
     let verifier_result =
         wolverine_batch_mul_verify(&a_r, &b_r, &c_r, &mut vole_receiver, &mut channel);
+
+    drop(vole_receiver);
+    drop(channel);
 
     let prover_result = prover_handle.join().expect("prover thread panicked");
     prover_result?;

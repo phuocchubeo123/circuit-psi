@@ -277,6 +277,7 @@ dependencies = [
  "rayon",
  "scuttlebutt",
  "serde",
+ "sha2",
  "subtle",
  "swanky-field",
  "swanky-field-binary",

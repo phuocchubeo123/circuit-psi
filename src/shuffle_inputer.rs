@@ -3,7 +3,7 @@ use crate::{
         BeDOZa, 
         bedoza_receiver::{BeDOZaReceiver, linear_comb_receiver, receive_open_shares}, 
         bedoza_sender::{BeDOZaSender, linear_comb_sender, send_open_shares}, 
-        comm_util::send_fe_vec, 
+        comm_util::{random_32bytes_coin, send_fe_vec}, 
         defines::{FE, powers, random_fe_vec_from_rng}, wolverine::{
             wolverine_batch_mul_prove, wolverine_batch_mul_public_output_verify,
             wolverine_batch_mul_verify,
@@ -74,7 +74,7 @@ impl Inputer {
     ) -> Result<Vec<BeDOZaSender>> {
         ensure!(
             authenticated_xis.len() == authenticated_ris.len(),
-            "step3 length mismatch: authenticated x values {} vs authenticated r values {}",
+            "step1 length mismatch: authenticated x values {} vs authenticated r values {}",
             authenticated_xis.len(),
             authenticated_ris.len()
         );
@@ -127,8 +127,10 @@ impl Inputer {
 
         let authenticated_x0 = vole_sender.commit_auth(channel, &[k1_auth_rand.val()])
             .map_err(|e| anyhow!("Failed to authenticate x0 value: {e}"))?[0];
+
         let authenticated_u0 = vole_sender.commit_auth(channel, &[k1_auth_rand.pad()])
             .map_err(|e| anyhow!("Faile to authenticate u0 value: {e}"))?[0];
+
         let authenticated_v0 = vole_receiver.commit_auth(channel, 1)
             .map_err(|e| anyhow!("Failed to receive authenticated v0 value: {e}"))?[0];
 
@@ -136,13 +138,9 @@ impl Inputer {
         let authenticated_vs = vole_receiver.commit_auth(channel, x_values.len())
             .map_err(|e| anyhow!("Failed to receive authenticated vi values: {e}"))?;
 
-        // 4) Prove the correctness of authenticated ui and xi
-        // Shuffler samples seed so it can independently reconstruct the same linear combination.
-        let mut seed = [0u8; 32];
-        let seed_bytes = channel
-            .receive()
-            .map_err(|e| anyhow!("step5 failed to receive seed: {}", e))?;
-        seed.copy_from_slice(&seed_bytes);
+        // 4) Prove the correctness of authenticated ui and xi using a jointly sampled seed.
+        let seed = random_32bytes_coin(true, channel)
+            .map_err(|e| anyhow!("step2 failed to jointly sample seed: {}", e))?;
         let mut seeded_rng = StdRng::from_seed(seed);
         let coeffs = random_fe_vec_from_rng(&mut seeded_rng, authenticated_xs.len())?;
 
@@ -270,12 +268,9 @@ impl Inputer {
         send_group_elements(&g_ri, channel)
             .map_err(|e| anyhow!("step10 failed to send g^ri values: {}", e))?;
 
-        // Shuffler samples coefficients and sends seed.
-        let mut seed= [0u8; 32];
-        let mut seed_bytes = channel
-            .receive()
-            .map_err(|e| anyhow!("step10 failed to receive seed: {}", e))?;
-        seed.copy_from_slice(&seed_bytes);
+        // Jointly sample coefficients for the random linear combination.
+        let seed = random_32bytes_coin(true, channel)
+            .map_err(|e| anyhow!("step4 failed to jointly sample seed: {}", e))?;
         let mut seeded_rng = StdRng::from_seed(seed);
         let alphas = random_fe_vec_from_rng(&mut seeded_rng, authenticated_ri_sender.len())?;
 
@@ -354,7 +349,7 @@ impl Inputer {
         let product_to_check = receive_open_shares(&[authenticated_running_products[n - 2]], channel)
             .map_err(|e| anyhow!("Failed to receive the product to check: {e}"))?[0];
 
-        let reference_product = (1..(n + 1))
+        let reference_product = (0..n)
             .zip(x_powers.iter())
             .map(|(i, x_p)| alpha + beta * FE::from(i as u64) + gamma * *x_p)
             .product();
@@ -381,6 +376,20 @@ impl Inputer {
         let shuffled_oprf = receive_group_elements(channel)
             .map_err(|e| anyhow!("step15 failed to receive shuffled OPRF points: {}", e))?;
 
+        // Precompute both tag/MSM products before reading the proof batches so the peer can keep
+        // writing while we spend time on local multi-scalar multiplications.
+        let xi_times_inverse_tags: Vec<FE> = authenticated_xi_times_inverse.iter()
+            .map(|bedoza_receiver| bedoza_receiver.tag())
+            .collect();
+        let g_xi_times_inverse_tag_product = msm_pippenger(g_ri, &xi_times_inverse_tags)
+            .map_err(|e| anyhow!("Failed to get multi-exponentiation for g_xi_times_inverse tags: {e}"))?;
+
+        let shuffled_x_powers_tags: Vec<FE> = authenticated_permuted_x_powers.iter()
+            .map(|bedoza_receiver| bedoza_receiver.tag())
+            .collect();
+        let shuffled_oprf_x_powers_tag_product = msm_pippenger(&shuffled_oprf, &shuffled_x_powers_tags)
+            .map_err(|e| anyhow!("Failed to get multi-exponentiation for shuffled_oprf^x_powers tags: {e}"))?;
+
         // 1) Receive and verify the left hand side
         // Shuffler sends [opened_left_product, pad_product] in one batch.
         let mut left_proof_elems = receive_group_elements(channel)
@@ -392,12 +401,6 @@ impl Inputer {
         );
         let g_xi_times_inverse_product = left_proof_elems.swap_remove(0);
         let g_xi_times_inverse_pad_product = left_proof_elems.swap_remove(0);
-
-        let xi_times_inverse_tags: Vec<FE> = authenticated_xi_times_inverse.iter()
-            .map(|bedoza_receiver| bedoza_receiver.tag())
-            .collect();
-        let g_xi_times_inverse_tag_product = msm_pippenger(g_ri, &xi_times_inverse_tags)
-            .map_err(|e| anyhow!("Failed to get multi-exponentiation for g_xi_times_inverse tags: {e}"))?;
 
         let lhs = g_xi_times_inverse_pad_product + g_xi_times_inverse_tag_product;
         let rhs = g_xi_times_inverse_product.scalar_mul(&authenticated_xi_times_inverse[0].key());
@@ -419,13 +422,6 @@ impl Inputer {
         );
         let shuffled_oprf_x_powers_product = right_proof_elems.swap_remove(0);
         let shuffled_oprf_x_powers_pad_product = right_proof_elems.swap_remove(0);
-
-        let shuffled_x_powers_tags: Vec<FE> = authenticated_permuted_x_powers.iter()
-            .map(|bedoza_receiver| bedoza_receiver.tag())
-            .collect();
-
-        let shuffled_oprf_x_powers_tag_product = msm_pippenger(&shuffled_oprf, &shuffled_x_powers_tags)
-            .map_err(|e| anyhow!("Failed to get multi-exponentiation for shuffled_oprf^x_powers tags: {e}"))?;
 
         let lhs = shuffled_oprf_x_powers_pad_product + shuffled_oprf_x_powers_tag_product;
         let rhs = shuffled_oprf_x_powers_product.scalar_mul(&authenticated_permuted_x_powers[0].key());

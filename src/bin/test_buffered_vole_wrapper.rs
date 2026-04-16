@@ -102,21 +102,20 @@ fn receiver_party(
 }
 
 fn verify_batch(
-    alpha: FourQScalarField,
+    delta: FourQScalarField,
     sender_out: &[BeDOZaSender],
     receiver_out: &[BeDOZaReceiver],
 ) {
     assert_eq!(sender_out.len(), receiver_out.len());
     for (sv, rv) in sender_out.iter().zip(receiver_out.iter()) {
-        assert_eq!(sv.val() * alpha + sv.pad(), rv.tag());
+        assert_eq!(sv.val() * delta - sv.pad(), rv.tag());
     }
 }
 
 fn main() -> eyre::Result<()> {
     let args = Args::parse();
 
-    let alpha = fq(7);
-    let delta = -alpha;
+    let delta = fq(7);
 
     let listener = TcpListener::bind("127.0.0.1:0").wrap_err("bind localhost listener")?;
     let addr_str = listener.local_addr().wrap_err("read listener address")?.to_string();
@@ -157,9 +156,9 @@ fn main() -> eyre::Result<()> {
         .expect("sender thread panicked")
         .wrap_err("sender party failed")?;
 
-    verify_batch(alpha, &sender_random, &receiver_random);
-    verify_batch(alpha, &sender_1, &receiver_1);
-    verify_batch(alpha, &sender_2, &receiver_2);
+    verify_batch(delta, &sender_random, &receiver_random);
+    verify_batch(delta, &sender_1, &receiver_1);
+    verify_batch(delta, &sender_2, &receiver_2);
 
     println!(
         "buffered VOLE wrapper check passed. random_auth={}, materialized=({}, {})",

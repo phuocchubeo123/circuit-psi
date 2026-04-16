@@ -1,5 +1,7 @@
 use crate::{bedoza::defines::FE, tcp_channel::SwankyChannel};
 use anyhow::{Result, anyhow};
+use rand::RngExt;
+use sha2::{Digest, Sha256};
 
 const FE_BYTES: usize = 32;
 
@@ -48,4 +50,47 @@ pub fn receive_fe_vec(channel: &mut SwankyChannel) -> Result<Vec<FE>> {
     }
 
     Ok(out)
+}
+
+// Jointly sample 32 random bytes with a simple commit-then-reveal coin toss.
+// `side = false` acts as the first sender (commit to r0), `side = true` acts as the receiver.
+pub fn random_32bytes_coin(side: bool, channel: &mut SwankyChannel) -> Result<[u8; 32]> {
+    if !side {
+        let mut rng = rand::rng();
+        let r0: [u8; 32] = rng.random();
+        let r0_hash: [u8; 32] = Sha256::digest(r0).into();
+        channel.send(&r0_hash)?;
+
+        let r1_raw = channel.receive()?;
+        let r1_len = r1_raw.len();
+        let r1: [u8; 32] = r1_raw
+            .try_into()
+            .map_err(|_| anyhow!("Expected 32 bytes for r1, got {}", r1_len))?;
+
+        channel.send(&r0)?;
+
+        Ok(std::array::from_fn(|i| r0[i] ^ r1[i]))
+    } else {
+        let r0_hash_raw = channel.receive()?;
+        let r0_hash_len = r0_hash_raw.len();
+        let r0_hash: [u8; 32] = r0_hash_raw
+            .try_into()
+            .map_err(|_| anyhow!("Expected 32 bytes for hash(r0), got {}", r0_hash_len))?;
+
+        let mut rng = rand::rng();
+        let r1: [u8; 32] = rng.random();
+        channel.send(&r1)?;
+
+        let r0_raw = channel.receive()?;
+        let r0_len = r0_raw.len();
+        let r0: [u8; 32] = r0_raw
+            .try_into()
+            .map_err(|_| anyhow!("Expected 32 bytes for r0, got {}", r0_len))?;
+        let expected_hash: [u8; 32] = Sha256::digest(r0).into();
+        if expected_hash != r0_hash {
+            return Err(anyhow!("Coin-toss commitment check failed"));
+        }
+
+        Ok(std::array::from_fn(|i| r0[i] ^ r1[i]))
+    }
 }

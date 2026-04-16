@@ -49,7 +49,7 @@ fn main() -> Result<()> {
     })?;
 
     let mut auth_vole_receiver = timed("init_auth_vole_receiver", || {
-        BufferedVoleReceiver::init(&mut channel, -delta_1, LPN21)
+        BufferedVoleReceiver::init(&mut channel, delta_1, LPN21)
             .map_err(|e| anyhow!("init auth receiver VOLE failed: {}", e))
     })?;
     let mut auth_vole_sender = timed("init_auth_vole_sender", || {
@@ -73,7 +73,6 @@ fn main() -> Result<()> {
     ) = timed("step0", || {
         shuffler.step0_authenticate_oprf_key_and_xi_and_ri_and_send_pi(
             &permutation,
-            &mut protocol_rng,
             &mut auth_vole_sender,
             &mut auth_vole_receiver,
             &mut channel,
@@ -81,7 +80,7 @@ fn main() -> Result<()> {
     })?;
 
     let mut k1_mul_vole_receiver = timed("init_k1_mul_vole_receiver", || {
-        BufferedVoleReceiver::init(&mut channel, -k1, LPN21)
+        BufferedVoleReceiver::init(&mut channel, k1, LPN21)
             .map_err(|e| anyhow!("init k1 mul receiver VOLE failed: {}", e))
     })?;
 
