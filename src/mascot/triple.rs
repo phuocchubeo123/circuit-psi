@@ -1,15 +1,17 @@
 use crate::{
+    base_cot::BaseCot,
     bedoza::{
         BeDOZa, BeDOZaTriple, bedoza_receiver::BeDOZaReceiver, bedoza_sender::BeDOZaSender,
+        open_values_receive, open_values_send,
     },
     comm_util::{receive_fe, send_fe},
+    network::tcp_channel::SwankyChannel,
     pre_ot::OTPre,
     scalar_field::{FOURQ_SCALAR_BITS, random_fourq_elements_from_prg},
     vole::field_config::{FE, FE_LIMBS, fe_to_u128_limbs},
     vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
 };
 use psi_aes::prg::PRG;
-use swanky_channel_legacy::AbstractChannel;
 
 pub const TAU: usize = 4;
 pub const TRIPLES_PER_PAIR: usize = 2;
@@ -22,64 +24,28 @@ pub struct TripleShare {
     pub c: FE,
 }
 
-#[derive(Clone)]
-struct AuthTripleShare {
-    a: BeDOZa,
-    b: BeDOZa,
-    c: BeDOZa,
-}
-
 pub struct MascotTripleSender {
-    sender_ot_used: usize,
-    receiver_ot_used: usize,
+    powers_of_two: Vec<FE>,
 }
 
 pub struct MascotTripleReceiver {
-    sender_ot_used: usize,
-    receiver_ot_used: usize,
+    powers_of_two: Vec<FE>,
 }
 
 impl MascotTripleSender {
     pub fn new() -> Self {
         Self {
-            sender_ot_used: 0,
-            receiver_ot_used: 0,
+            powers_of_two: precompute_powers_of_two(FOURQ_SCALAR_BITS),
         }
     }
 
-    pub fn triple<IO: AbstractChannel>(
+    pub fn triples(
         &mut self,
-        io: &mut IO,
-        ot_when_receiver: &mut OTPre<FE_LIMBS>,
-        ot_when_sender: &mut OTPre<FE_LIMBS>,
+        io: &mut SwankyChannel,
+        cot_when_receiver: &mut BaseCot,
+        cot_when_sender: &mut BaseCot,
         auth_vole_sender: &mut BufferedVoleSender,
         auth_vole_receiver: &mut BufferedVoleReceiver,
-        local_key: FE,
-        comm: &mut u64,
-    ) -> BeDOZaTriple {
-        self.triples(
-            io,
-            ot_when_receiver,
-            ot_when_sender,
-            auth_vole_sender,
-            auth_vole_receiver,
-            local_key,
-            1,
-            comm,
-        )
-        .into_iter()
-        .next()
-        .expect("single triple exists")
-    }
-
-    pub fn triples<IO: AbstractChannel>(
-        &mut self,
-        io: &mut IO,
-        ot_when_receiver: &mut OTPre<FE_LIMBS>,
-        ot_when_sender: &mut OTPre<FE_LIMBS>,
-        auth_vole_sender: &mut BufferedVoleSender,
-        auth_vole_receiver: &mut BufferedVoleReceiver,
-        local_key: FE,
         n: usize,
         comm: &mut u64,
     ) -> Vec<BeDOZaTriple> {
@@ -87,9 +53,13 @@ impl MascotTripleSender {
             return vec![];
         }
 
-        let m = FOURQ_SCALAR_BITS;
-        let powers = precompute_powers_of_two(m);
+        let m = self.powers_of_two.len();
+        let ot_times = n * REPETITION;
         let total_ots = n * m * REPETITION;
+        let mut ot_when_receiver = OTPre::<FE_LIMBS>::new(m, ot_times);
+        cot_when_receiver.cot_gen_preot(io, &mut ot_when_receiver, total_ots, None, comm);
+        let mut ot_when_sender = OTPre::<FE_LIMBS>::new(m, ot_times);
+        cot_when_sender.cot_gen_preot(io, &mut ot_when_sender, total_ots, None, comm);
 
         let (a_send_parts_0, a_send_0) = random_a_parts_and_sum(n, TAU);
         let (a_send_parts_1, a_send_1) = random_a_parts_and_sum(n, TAU);
@@ -101,24 +71,20 @@ impl MascotTripleSender {
             &b_send,
             m,
             REPETITION,
-            ot_when_receiver,
-            self.receiver_ot_used,
+            &mut ot_when_receiver,
             comm,
         );
-        self.receiver_ot_used += total_ots;
 
         // COPE #2: sender acts as OT sender and samples both random branches directly.
         let (q0_2, q1_2) = init_receiver_random_ot_batch(
             io,
             total_ots,
-            ot_when_sender,
-            self.sender_ot_used,
+            &mut ot_when_sender,
             comm,
         );
-        self.sender_ot_used += total_ots;
 
         let (x1_sum_0, x1_sum_1) =
-            extend_sender_sum_batch(io, &selected_1, &delta_bits_1, n, m, TAU, &powers);
+            extend_sender_sum_batch(io, &selected_1, &delta_bits_1, n, m, TAU, &self.powers_of_two);
 
         let (y2_sum_0, y2_sum_1) = extend_receiver_sum_batch(
             io,
@@ -128,7 +94,7 @@ impl MascotTripleSender {
             &a_send_parts_1,
             m,
             TAU,
-            &powers,
+            &self.powers_of_two,
             comm,
         );
 
@@ -153,8 +119,6 @@ impl MascotTripleSender {
             &triple_1,
             auth_vole_sender,
             auth_vole_receiver,
-            local_key,
-            false,
             true,
             comm,
         )
@@ -164,44 +128,17 @@ impl MascotTripleSender {
 impl MascotTripleReceiver {
     pub fn new() -> Self {
         Self {
-            sender_ot_used: 0,
-            receiver_ot_used: 0,
+            powers_of_two: precompute_powers_of_two(FOURQ_SCALAR_BITS),
         }
     }
 
-    pub fn triple<IO: AbstractChannel>(
+    pub fn triples(
         &mut self,
-        io: &mut IO,
-        ot_when_receiver: &mut OTPre<FE_LIMBS>,
-        ot_when_sender: &mut OTPre<FE_LIMBS>,
+        io: &mut SwankyChannel,
+        cot_when_receiver: &mut BaseCot,
+        cot_when_sender: &mut BaseCot,
         auth_vole_sender: &mut BufferedVoleSender,
         auth_vole_receiver: &mut BufferedVoleReceiver,
-        local_key: FE,
-        comm: &mut u64,
-    ) -> BeDOZaTriple {
-        self.triples(
-            io,
-            ot_when_receiver,
-            ot_when_sender,
-            auth_vole_sender,
-            auth_vole_receiver,
-            local_key,
-            1,
-            comm,
-        )
-        .into_iter()
-        .next()
-        .expect("single triple exists")
-    }
-
-    pub fn triples<IO: AbstractChannel>(
-        &mut self,
-        io: &mut IO,
-        ot_when_receiver: &mut OTPre<FE_LIMBS>,
-        ot_when_sender: &mut OTPre<FE_LIMBS>,
-        auth_vole_sender: &mut BufferedVoleSender,
-        auth_vole_receiver: &mut BufferedVoleReceiver,
-        local_key: FE,
         n: usize,
         comm: &mut u64,
     ) -> Vec<BeDOZaTriple> {
@@ -209,9 +146,13 @@ impl MascotTripleReceiver {
             return vec![];
         }
 
-        let m = FOURQ_SCALAR_BITS;
-        let powers = precompute_powers_of_two(m);
+        let m = self.powers_of_two.len();
+        let ot_times = n * REPETITION;
         let total_ots = n * m * REPETITION;
+        let mut ot_when_sender = OTPre::<FE_LIMBS>::new(m, ot_times);
+        cot_when_sender.cot_gen_preot(io, &mut ot_when_sender, total_ots, None, comm);
+        let mut ot_when_receiver = OTPre::<FE_LIMBS>::new(m, ot_times);
+        cot_when_receiver.cot_gen_preot(io, &mut ot_when_receiver, total_ots, None, comm);
 
         let (a_recv_parts_0, a_recv_0) = random_a_parts_and_sum(n, TAU);
         let (a_recv_parts_1, a_recv_1) = random_a_parts_and_sum(n, TAU);
@@ -221,11 +162,9 @@ impl MascotTripleReceiver {
         let (q0_1, q1_1) = init_receiver_random_ot_batch(
             io,
             total_ots,
-            ot_when_sender,
-            self.sender_ot_used,
+            &mut ot_when_sender,
             comm,
         );
-        self.sender_ot_used += total_ots;
 
         // COPE #2: receiver has delta = b and receives chosen branch through OT.
         let (delta_bits_2, selected_2) = init_sender_pre_ot_batch(
@@ -233,11 +172,9 @@ impl MascotTripleReceiver {
             &b_recv,
             m,
             REPETITION,
-            ot_when_receiver,
-            self.receiver_ot_used,
+            &mut ot_when_receiver,
             comm,
         );
-        self.receiver_ot_used += total_ots;
 
         let (y1_sum_0, y1_sum_1) = extend_receiver_sum_batch(
             io,
@@ -247,12 +184,12 @@ impl MascotTripleReceiver {
             &a_recv_parts_1,
             m,
             TAU,
-            &powers,
+            &self.powers_of_two,
             comm,
         );
 
         let (x2_sum_0, x2_sum_1) =
-            extend_sender_sum_batch(io, &selected_2, &delta_bits_2, n, m, TAU, &powers);
+            extend_sender_sum_batch(io, &selected_2, &delta_bits_2, n, m, TAU, &self.powers_of_two);
 
         let mut triple_0 = Vec::with_capacity(n);
         let mut triple_1 = Vec::with_capacity(n);
@@ -275,8 +212,6 @@ impl MascotTripleReceiver {
             &triple_1,
             auth_vole_sender,
             auth_vole_receiver,
-            local_key,
-            true,
             false,
             comm,
         )
@@ -334,13 +269,12 @@ fn precompute_powers_of_two(m: usize) -> Vec<FE> {
     powers
 }
 
-fn init_sender_pre_ot_batch<IO: AbstractChannel>(
-    io: &mut IO,
+fn init_sender_pre_ot_batch(
+    io: &mut SwankyChannel,
     deltas: &[FE],
     m: usize,
     repetition: usize,
     pre_ot: &mut OTPre<FE_LIMBS>,
-    ot_offset: usize,
     comm: &mut u64,
 ) -> (Vec<bool>, Vec<FE>) {
     let delta_bits = flatten_fe_bits(deltas, m, repetition);
@@ -349,24 +283,16 @@ fn init_sender_pre_ot_batch<IO: AbstractChannel>(
     pre_ot.choices_recver_batch(io, &delta_bits, total_ots, comm);
 
     let mut selected_msg = vec![[0u128; FE_LIMBS]; total_ots];
-    pre_ot.recv_with_offset(
-        io,
-        &mut selected_msg,
-        &delta_bits,
-        total_ots,
-        ot_offset,
-        comm,
-    );
+    pre_ot.recv_with_offset(io, &mut selected_msg, &delta_bits, total_ots, 0, comm);
 
     let selected = selected_msg.iter().map(u128_limbs_to_fe).collect::<Vec<_>>();
     (delta_bits, selected)
 }
 
-fn init_receiver_random_ot_batch<IO: AbstractChannel>(
-    io: &mut IO,
+fn init_receiver_random_ot_batch(
+    io: &mut SwankyChannel,
     total_ots: usize,
     pre_ot: &mut OTPre<FE_LIMBS>,
-    ot_offset: usize,
     comm: &mut u64,
 ) -> (Vec<FE>, Vec<FE>) {
     let mut rot_prg = PRG::new(None, 0);
@@ -380,13 +306,13 @@ fn init_receiver_random_ot_batch<IO: AbstractChannel>(
     let k1_msg = q1.iter().map(|x| fe_to_u128_limbs(*x)).collect::<Vec<_>>();
 
     pre_ot.choices_sender_batch(io, total_ots, comm);
-    pre_ot.send_with_offset(io, &k0_msg, &k1_msg, total_ots, ot_offset, comm);
+    pre_ot.send_with_offset(io, &k0_msg, &k1_msg, total_ots, 0, comm);
 
     (q0, q1)
 }
 
-fn extend_sender_sum_batch<IO: AbstractChannel>(
-    io: &mut IO,
+fn extend_sender_sum_batch(
+    io: &mut SwankyChannel,
     selected: &[FE],
     delta_bits: &[bool],
     n: usize,
@@ -435,8 +361,8 @@ fn extend_sender_sum_batch<IO: AbstractChannel>(
     (sum_0, sum_1)
 }
 
-fn extend_receiver_sum_batch<IO: AbstractChannel>(
-    io: &mut IO,
+fn extend_receiver_sum_batch(
+    io: &mut SwankyChannel,
     q0: &[FE],
     q1: &[FE],
     u_parts_0: &[Vec<FE>],
@@ -493,14 +419,12 @@ fn extend_receiver_sum_batch<IO: AbstractChannel>(
     (sum_0, sum_1)
 }
 
-fn authenticate_and_sacrifice_pairs<IO: AbstractChannel>(
-    io: &mut IO,
+fn authenticate_and_sacrifice_pairs(
+    io: &mut SwankyChannel,
     triple_0: &[TripleShare],
     triple_1: &[TripleShare],
     auth_vole_sender: &mut BufferedVoleSender,
     auth_vole_receiver: &mut BufferedVoleReceiver,
-    local_key: FE,
-    local_side: bool,
     sender_first: bool,
     comm: &mut u64,
 ) -> Vec<BeDOZaTriple> {
@@ -521,8 +445,6 @@ fn authenticate_and_sacrifice_pairs<IO: AbstractChannel>(
         triple_1,
         auth_vole_sender,
         auth_vole_receiver,
-        local_key,
-        local_side,
         sender_first,
     );
 
@@ -531,32 +453,36 @@ fn authenticate_and_sacrifice_pairs<IO: AbstractChannel>(
     let s = open_and_add(io, &s_local, comm);
 
     let rho_authenticated = (0..n)
-        .map(|i| auth_0[i].a * s[i] - auth_1[i].a)
+        .map(|i| auth_0[i].0 * s[i] - auth_1[i].0)
         .collect::<Vec<_>>();
-    let rho_open = open_bedoza_values(io, &rho_authenticated, comm);
+    open_values_send(&rho_authenticated, io).expect("failed to send opened rho shares");
+    *comm += (rho_authenticated.len() as u64) * 64;
+    let rho_open =
+        open_values_receive(&rho_authenticated, io).expect("failed to receive opened rho shares");
 
     let sigma_authenticated = (0..n)
-        .map(|i| auth_0[i].c * s[i] - auth_1[i].c - auth_0[i].b * rho_open[i])
+        .map(|i| auth_0[i].2 * s[i] - auth_1[i].2 - auth_0[i].1 * rho_open[i])
         .collect::<Vec<_>>();
-    let sigma_open = open_bedoza_values(io, &sigma_authenticated, comm);
+    open_values_send(&sigma_authenticated, io).expect("failed to send opened sigma shares");
+    *comm += (sigma_authenticated.len() as u64) * 64;
+    let sigma_open = open_values_receive(&sigma_authenticated, io)
+        .expect("failed to receive opened sigma shares");
 
     for (i, sigma) in sigma_open.iter().enumerate() {
         assert_eq!(*sigma, FE::zero(), "sacrifice check failed at index {i}");
     }
 
-    auth_0.into_iter().map(|t| (t.a, t.b, t.c)).collect()
+    auth_0
 }
 
-fn authenticate_triples_to_bedoza<IO: AbstractChannel>(
-    io: &mut IO,
+fn authenticate_triples_to_bedoza(
+    io: &mut SwankyChannel,
     triple_0: &[TripleShare],
     triple_1: &[TripleShare],
     auth_vole_sender: &mut BufferedVoleSender,
     auth_vole_receiver: &mut BufferedVoleReceiver,
-    local_key: FE,
-    local_side: bool,
     sender_first: bool,
-) -> (Vec<AuthTripleShare>, Vec<AuthTripleShare>) {
+) -> (Vec<BeDOZaTriple>, Vec<BeDOZaTriple>) {
     let n = triple_0.len();
     assert_eq!(n, triple_1.len(), "triple pair length mismatch");
     if n == 0 {
@@ -572,37 +498,22 @@ fn authenticate_triples_to_bedoza<IO: AbstractChannel>(
         values.push(triple_1[i].c);
     }
 
-    let sender_owner_side = local_side;
-    let receiver_owner_side = !local_side;
-
     let (sender_shares, receiver_shares): (Vec<BeDOZaSender>, Vec<BeDOZaReceiver>) = if sender_first
     {
         let sender = auth_vole_sender
             .commit_auth(io, &values)
-            .expect("failed to authenticate local values with VOLE sender")
-            .into_iter()
-            .map(|s| BeDOZaSender::new(s.val(), s.pad(), sender_owner_side))
-            .collect();
+            .expect("failed to authenticate local values with VOLE sender");
         let receiver = auth_vole_receiver
             .commit_auth(io, values.len())
-            .expect("failed to receive authenticated peer values with VOLE receiver")
-            .into_iter()
-            .map(|r| BeDOZaReceiver::new(r.tag(), local_key, receiver_owner_side))
-            .collect();
+            .expect("failed to receive authenticated peer values with VOLE receiver");
         (sender, receiver)
     } else {
         let receiver = auth_vole_receiver
             .commit_auth(io, values.len())
-            .expect("failed to receive authenticated peer values with VOLE receiver")
-            .into_iter()
-            .map(|r| BeDOZaReceiver::new(r.tag(), local_key, receiver_owner_side))
-            .collect();
+            .expect("failed to receive authenticated peer values with VOLE receiver");
         let sender = auth_vole_sender
             .commit_auth(io, &values)
-            .expect("failed to authenticate local values with VOLE sender")
-            .into_iter()
-            .map(|s| BeDOZaSender::new(s.val(), s.pad(), sender_owner_side))
-            .collect();
+            .expect("failed to authenticate local values with VOLE sender");
         (sender, receiver)
     };
 
@@ -627,22 +538,22 @@ fn authenticate_triples_to_bedoza<IO: AbstractChannel>(
     let mut auth_1 = Vec::with_capacity(n);
     for i in 0..n {
         let base = 5 * i;
-        auth_0.push(AuthTripleShare {
-            a: authenticated[base],
-            b: authenticated[base + 1],
-            c: authenticated[base + 2],
-        });
-        auth_1.push(AuthTripleShare {
-            a: authenticated[base + 3],
-            b: authenticated[base + 1],
-            c: authenticated[base + 4],
-        });
+        auth_0.push((
+            authenticated[base],
+            authenticated[base + 1],
+            authenticated[base + 2],
+        ));
+        auth_1.push((
+            authenticated[base + 3],
+            authenticated[base + 1],
+            authenticated[base + 4],
+        ));
     }
 
     (auth_0, auth_1)
 }
 
-fn open_and_add<IO: AbstractChannel>(io: &mut IO, local: &[FE], comm: &mut u64) -> Vec<FE> {
+fn open_and_add(io: &mut SwankyChannel, local: &[FE], comm: &mut u64) -> Vec<FE> {
     *comm += send_fe(io, local).expect("Failed to send opening share");
     let peer = receive_fe(io).expect("Failed to receive opening share");
     assert_eq!(peer.len(), local.len(), "opening length mismatch");
@@ -651,73 +562,6 @@ fn open_and_add<IO: AbstractChannel>(io: &mut IO, local: &[FE], comm: &mut u64) 
         .iter()
         .zip(peer.iter())
         .map(|(&l, &r)| l + r)
-        .collect()
-}
-
-fn open_bedoza_values<IO: AbstractChannel>(
-    io: &mut IO,
-    shares: &[BeDOZa],
-    comm: &mut u64,
-) -> Vec<FE> {
-    if shares.is_empty() {
-        return vec![];
-    }
-
-    // Send openings for local sender components.
-    for share in shares {
-        io.write_bytes(&share.bedoza_sender().val().to_bytes_le())
-            .expect("failed to send opened sender value");
-    }
-    for share in shares {
-        io.write_bytes(&share.bedoza_sender().pad().to_bytes_le())
-            .expect("failed to send opened sender pad");
-    }
-    io.flush().expect("failed to flush opened sender shares");
-    *comm += (shares.len() as u64) * 64;
-
-    // Receive peer openings and verify with local receiver components.
-    let key = shares[0].bedoza_receiver().key();
-    for (i, share) in shares.iter().enumerate() {
-        assert_eq!(
-            share.bedoza_receiver().key(),
-            key,
-            "BeDOZa opening key mismatch at index {i}"
-        );
-    }
-
-    let mut peer_values = Vec::with_capacity(shares.len());
-    for _ in shares {
-        let mut bytes = [0u8; 32];
-        io.read_bytes(&mut bytes)
-            .expect("failed to receive opened peer value");
-        peer_values.push(FE::from_bytes_le(&bytes).expect("failed to parse opened peer value"));
-    }
-
-    let mut peer_pads = Vec::with_capacity(shares.len());
-    for _ in shares {
-        let mut bytes = [0u8; 32];
-        io.read_bytes(&mut bytes)
-            .expect("failed to receive opened peer pad");
-        peer_pads.push(FE::from_bytes_le(&bytes).expect("failed to parse opened peer pad"));
-    }
-
-    for (i, ((&value, &pad), share)) in peer_values
-        .iter()
-        .zip(peer_pads.iter())
-        .zip(shares.iter())
-        .enumerate()
-    {
-        assert_eq!(
-            key * value - pad,
-            share.bedoza_receiver().tag(),
-            "BeDOZa opening tag verification failed at index {i}"
-        );
-    }
-
-    shares
-        .iter()
-        .zip(peer_values.iter())
-        .map(|(share, &peer_value)| share.bedoza_sender().val() + peer_value)
         .collect()
 }
 

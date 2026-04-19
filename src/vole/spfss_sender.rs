@@ -1,6 +1,6 @@
 use crate::comm_util::*;
-use swanky_channel_legacy::AbstractChannel;
 use crate::pre_ot::OTPre;
+use crate::tcp_channel::SwankyChannel;
 use crate::vole::field_config::TwoKeyPRP;
 use crate::vole::field_config::FE_LIMBS;
 use psi_aes::prg::PRG;
@@ -63,7 +63,7 @@ impl SpfssSenderFp {
     }
 
     /// Send OT messages and secret sum.
-    pub fn send<IO: AbstractChannel>(&mut self, io: &mut IO, ot: &mut OTPre<FE_LIMBS>, s: usize, comm: &mut u64) {
+    pub fn send(&mut self, io: &mut SwankyChannel, ot: &mut OTPre<FE_LIMBS>, s: usize, comm: &mut u64) {
         let ot_msg_0 = self.m0
             .iter()
             .map(|x| fe_to_u128_limbs(*x))
@@ -111,7 +111,7 @@ impl SpfssSenderFp {
     }
 
     /// Consistency check: Protocol PI_spsVOLE
-    pub fn consistency_check<IO: AbstractChannel>(&mut self, io: &mut IO, y: FE, comm: &mut u64) {
+    pub fn consistency_check(&mut self, io: &mut SwankyChannel, y: FE, comm: &mut u64) {
         // z = y + delta * beta
 
         let hash = Hash::new();

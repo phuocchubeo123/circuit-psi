@@ -1,9 +1,9 @@
 use crate::comm_util::{receive_fe, send_fe};
+use crate::network::tcp_channel::SwankyChannel;
 use crate::pre_ot::OTPre;
 use crate::scalar_field::{FOURQ_SCALAR_BITS, random_fourq_elements_from_prg};
 use crate::vole::field_config::FE;
 use psi_aes::prg::PRG;
-use swanky_channel_legacy::AbstractChannel;
 
 const KEY_OT_LIMBS: usize = 1;
 
@@ -50,9 +50,9 @@ impl MascotCope {
         self.powers_of_two = powers;
     }
 
-    pub fn initialize_sender_pre_ot<IO: AbstractChannel>(
+    pub fn initialize_sender_pre_ot(
         &mut self,
-        io: &mut IO,
+        io: &mut SwankyChannel,
         delta: FE,
         pre_ot: &mut OTPre<KEY_OT_LIMBS>,
         ot_round: usize,
@@ -72,9 +72,9 @@ impl MascotCope {
         );
     }
 
-    pub fn initialize_receiver_pre_ot<IO: AbstractChannel>(
+    pub fn initialize_receiver_pre_ot(
         &mut self,
-        io: &mut IO,
+        io: &mut SwankyChannel,
         pre_ot: &mut OTPre<KEY_OT_LIMBS>,
         ot_round: usize,
         comm: &mut u64,
@@ -109,9 +109,9 @@ impl MascotCope {
         );
     }
 
-    pub fn extend_sender_batch<IO: AbstractChannel>(
+    pub fn extend_sender_batch(
         &mut self,
-        io: &mut IO,
+        io: &mut SwankyChannel,
         ret: &mut [FE],
         size: usize,
         _comm: &mut u64,
@@ -145,9 +145,9 @@ impl MascotCope {
         self.prm2pr_batch(ret, &v);
     }
 
-    pub fn extend_receiver_batch<IO: AbstractChannel>(
+    pub fn extend_receiver_batch(
         &mut self,
-        io: &mut IO,
+        io: &mut SwankyChannel,
         ret: &mut [FE],
         u: &[FE],
         size: usize,

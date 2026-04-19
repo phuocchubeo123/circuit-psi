@@ -1,6 +1,6 @@
 use crate::comm_util::*;
-use swanky_channel_legacy::AbstractChannel;
 use crate::pre_ot::OTPre;
+use crate::tcp_channel::SwankyChannel;
 use crate::vole::field_config::TwoKeyPRP;
 use crate::vole::field_config::FE_LIMBS;
 use psi_aes::prg::PRG;
@@ -61,7 +61,7 @@ impl SpfssRecverFp {
     }
 
     /// Receive the message and reconstruct the tree.
-    pub fn recv<IO: AbstractChannel>(&mut self, io: &mut IO, ot: &mut OTPre<FE_LIMBS>, s: usize, comm: &mut u64) {
+    pub fn recv(&mut self, io: &mut SwankyChannel, ot: &mut OTPre<FE_LIMBS>, s: usize, comm: &mut u64) {
         let mut receive_data = vec![[0u128; FE_LIMBS]; self.depth - 1];
         ot.recv(io, &mut receive_data, &self.b, self.depth - 1, s, comm);
 
@@ -144,7 +144,7 @@ impl SpfssRecverFp {
     }
 
     /// Consistency check for the protocol.
-    pub fn consistency_check<IO: AbstractChannel>(&mut self, io: &mut IO, z: FE, beta: FE, comm: &mut u64) {
+    pub fn consistency_check(&mut self, io: &mut SwankyChannel, z: FE, beta: FE, comm: &mut u64) {
         // z = y + delta * beta
 
         let hash = Hash::new();

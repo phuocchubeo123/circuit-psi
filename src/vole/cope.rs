@@ -2,7 +2,7 @@ use crate::ot::OTCO;
 use psi_aes::prg::PRG;
 use crate::comm_util::*;
 use crate::pre_ot::OTPre;
-use swanky_channel_legacy::AbstractChannel;
+use crate::tcp_channel::SwankyChannel;
 use std::time::Instant;
 
 pub type FE = crate::vole::field_config::FE;
@@ -60,7 +60,7 @@ impl Cope {
         self.powers_of_two = powers;
     }
 
-    pub fn initialize_sender<IO: AbstractChannel>(&mut self, io: &mut IO, delta: FE, comm: &mut u64) {
+    pub fn initialize_sender(&mut self, io: &mut SwankyChannel, delta: FE, comm: &mut u64) {
         self.delta = Some(delta);
         self.delta_bool = Self::delta_to_bool(&delta, self.m);
         self.precompute_powers_of_two(); // Precompute powers of two
@@ -87,9 +87,9 @@ impl Cope {
     }
 
     // Same as initialize_sender, but key OTs are provided by precomputed OT extension.
-    pub fn initialize_sender_pre_ot<IO: AbstractChannel>(
+    pub fn initialize_sender_pre_ot(
         &mut self,
-        io: &mut IO,
+        io: &mut SwankyChannel,
         delta: FE,
         pre_ot: &mut OTPre<KEY_OT_LIMBS>,
         ot_round: usize,
@@ -127,7 +127,7 @@ impl Cope {
         );
     }
 
-    pub fn initialize_receiver<IO: AbstractChannel>(&mut self, io: &mut IO, comm: &mut u64) {
+    pub fn initialize_receiver(&mut self, io: &mut SwankyChannel, comm: &mut u64) {
         self.precompute_powers_of_two(); // Precompute powers of two
 
         let mut k0 = vec![[0u8; 16]; self.m];
@@ -166,9 +166,9 @@ impl Cope {
     }
 
     // Same as initialize_receiver, but key OTs are provided by precomputed OT extension.
-    pub fn initialize_receiver_pre_ot<IO: AbstractChannel>(
+    pub fn initialize_receiver_pre_ot(
         &mut self,
-        io: &mut IO,
+        io: &mut SwankyChannel,
         pre_ot: &mut OTPre<KEY_OT_LIMBS>,
         ot_round: usize,
         comm: &mut u64,
@@ -214,7 +214,7 @@ impl Cope {
         );
     }
 
-    pub fn extend_sender<IO: AbstractChannel>(&mut self, io: &mut IO, comm: &mut u64) -> FE {
+    pub fn extend_sender(&mut self, io: &mut SwankyChannel, comm: &mut u64) -> FE {
         let mut w = vec![FE::zero(); self.m];
 
         if let Some(prgs) = &mut self.prg_g0 {
@@ -244,7 +244,7 @@ impl Cope {
         self.prm2pr(&v)
     }
 
-    pub fn extend_sender_batch<IO: AbstractChannel>(&mut self, io: &mut IO, ret: &mut [FE], size: usize, comm: &mut u64) {
+    pub fn extend_sender_batch(&mut self, io: &mut SwankyChannel, ret: &mut [FE], size: usize, comm: &mut u64) {
         // Generate ret_recv = ret_send + delta * u_recv
 
         let mut w = vec![vec![FE::zero(); size]; self.m];
@@ -280,7 +280,7 @@ impl Cope {
         self.prm2pr_batch(ret, &v);
     }
 
-    pub fn extend_receiver<IO: AbstractChannel>(&mut self, io: &mut IO, u: FE, comm: &mut u64) -> FE {
+    pub fn extend_receiver(&mut self, io: &mut SwankyChannel, u: FE, comm: &mut u64) -> FE {
         let mut w0 = vec![FE::zero(); self.m];
         let mut w1 = vec![FE::zero(); self.m];
         let mut tau = vec![FE::zero(); self.m];
@@ -303,7 +303,7 @@ impl Cope {
         self.prm2pr(&w0)
     }
 
-    pub fn extend_receiver_batch<IO: AbstractChannel>(&mut self, io: &mut IO, ret: &mut [FE], u: &[FE], size: usize, comm: &mut u64) {
+    pub fn extend_receiver_batch(&mut self, io: &mut SwankyChannel, ret: &mut [FE], u: &[FE], size: usize, comm: &mut u64) {
         // Generate ret_recv = ret_send + delta * u_recv
 
         let mut w0 = vec![vec![FE::zero(); size]; self.m];
@@ -337,7 +337,6 @@ impl Cope {
         // assert_eq!(tau_flat.clone().len(), self.m * size, "tau_flat mismatch type");
 
         *comm += send_fe(io, &tau_flat).expect("Failed to send tau");
-        io.flush();
 
         // Aggregate w0 batch results into ret
         self.prm2pr_batch(ret, &w0);
@@ -362,7 +361,7 @@ impl Cope {
     }
 
     // Debug
-    pub fn check_triple<IO: AbstractChannel>(&mut self, io: &mut IO, a: &[FE], b: &[FE], sz: usize) {
+    pub fn check_triple(&mut self, io: &mut SwankyChannel, a: &[FE], b: &[FE], sz: usize) {
         if self.party == 0 {
             // Sender's role
             send_fe(io, a).expect("Failed to send `a` in check_triple");

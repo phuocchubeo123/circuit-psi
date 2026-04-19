@@ -1,7 +1,7 @@
 use psi_aes::hash::Hash;
 use crate::comm_util::*;
 use crate::ot::comm_utils::{receive_point, send_point};
-use swanky_channel_legacy::AbstractChannel;
+use crate::tcp_channel::SwankyChannel;
 use p256::elliptic_curve::sec1::{ToEncodedPoint, FromEncodedPoint};
 use p256::elliptic_curve::{Field, Group}; 
 use p256::{Scalar, AffinePoint, ProjectivePoint};
@@ -15,7 +15,7 @@ impl OTCO {
     }
 
     /// Sender's OT implementation
-    pub fn send<IO: AbstractChannel>(&mut self, io: &mut IO, data0: &[[u8; 16]], data1: &[[u8; 16]], comm: &mut u64) {
+    pub fn send(&mut self, io: &mut SwankyChannel, data0: &[[u8; 16]], data1: &[[u8; 16]], comm: &mut u64) {
         let length = data0.len();
         let mut rng = rand08::thread_rng();
 
@@ -52,8 +52,6 @@ impl OTCO {
             BA_points[i] = B_a + A_a_inverse;
         }
 
-        io.flush();
-
         // Encrypt and send the data
         for i in 0..length {
             let key_b = Hash::kdf(
@@ -73,7 +71,7 @@ impl OTCO {
     }
 
     /// Receiver's OT implementation
-    pub fn recv<IO: AbstractChannel>(&mut self, io: &mut IO, choices: &[bool], output: &mut Vec<[u8; 16]>, comm: &mut u64) {
+    pub fn recv(&mut self, io: &mut SwankyChannel, choices: &[bool], output: &mut Vec<[u8; 16]>, comm: &mut u64) {
         let length = choices.len();
         let mut rng = rand08::thread_rng();
 
@@ -97,8 +95,6 @@ impl OTCO {
             let B_encoded = B_projective.to_affine().to_encoded_point(false);
             *comm += send_point(io, &B_encoded).expect("Cannot send B encoded");
         }
-
-        io.flush();
 
         // Compute shared points and decrypt data
         for i in 0..length {

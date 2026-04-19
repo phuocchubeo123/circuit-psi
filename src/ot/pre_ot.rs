@@ -1,6 +1,6 @@
 use crate::comm_util::{receive_bits, receive_u8, send_bits, send_u8};
+use crate::tcp_channel::SwankyChannel;
 use psi_aes::ccrh::CCRH;
-use swanky_channel_legacy::AbstractChannel;
 
 pub struct OTPre<const NUM_LIMBS: usize> {
     pre_data: Vec<[u128; NUM_LIMBS]>,
@@ -72,17 +72,17 @@ impl<const NUM_LIMBS: usize> OTPre<NUM_LIMBS> {
         }
     }
 
-    pub fn choices_sender<IO: AbstractChannel>(&mut self, io: &mut IO, _comm: &mut u64) {
+    pub fn choices_sender(&mut self, io: &mut SwankyChannel, _comm: &mut u64) {
         self.choices_sender_batch(io, self.length, _comm);
     }
 
-    pub fn choices_recver<IO: AbstractChannel>(&mut self, io: &mut IO, choices: &[bool], comm: &mut u64) {
+    pub fn choices_recver(&mut self, io: &mut SwankyChannel, choices: &[bool], comm: &mut u64) {
         self.choices_recver_batch(io, choices, self.length, comm);
     }
 
-    pub fn choices_sender_batch<IO: AbstractChannel>(
+    pub fn choices_sender_batch(
         &mut self,
-        io: &mut IO,
+        io: &mut SwankyChannel,
         length: usize,
         _comm: &mut u64,
     ) {
@@ -98,9 +98,9 @@ impl<const NUM_LIMBS: usize> OTPre<NUM_LIMBS> {
         self.count += length;
     }
 
-    pub fn choices_recver_batch<IO: AbstractChannel>(
+    pub fn choices_recver_batch(
         &mut self,
-        io: &mut IO,
+        io: &mut SwankyChannel,
         choices: &[bool],
         length: usize,
         comm: &mut u64,
@@ -125,9 +125,9 @@ impl<const NUM_LIMBS: usize> OTPre<NUM_LIMBS> {
         self.count += length;
     }
 
-    pub fn send<IO: AbstractChannel>(
+    pub fn send(
         &mut self,
-        io: &mut IO,
+        io: &mut SwankyChannel,
         m0: &[[u128; NUM_LIMBS]],
         m1: &[[u128; NUM_LIMBS]],
         length: usize,
@@ -137,9 +137,9 @@ impl<const NUM_LIMBS: usize> OTPre<NUM_LIMBS> {
         self.send_with_offset(io, m0, m1, length, s * length, comm);
     }
 
-    pub fn send_with_offset<IO: AbstractChannel>(
+    pub fn send_with_offset(
         &mut self,
-        io: &mut IO,
+        io: &mut SwankyChannel,
         m0: &[[u128; NUM_LIMBS]],
         m1: &[[u128; NUM_LIMBS]],
         length: usize,
@@ -172,9 +172,9 @@ impl<const NUM_LIMBS: usize> OTPre<NUM_LIMBS> {
         *comm += send_u8(io, &serialized).expect("Failed to send padded data");
     }
 
-    pub fn recv<IO: AbstractChannel>(
+    pub fn recv(
         &mut self,
-        io: &mut IO,
+        io: &mut SwankyChannel,
         data: &mut [[u128; NUM_LIMBS]],
         b: &[bool],
         length: usize,
@@ -184,9 +184,9 @@ impl<const NUM_LIMBS: usize> OTPre<NUM_LIMBS> {
         self.recv_with_offset(io, data, b, length, s * length, _comm);
     }
 
-    pub fn recv_with_offset<IO: AbstractChannel>(
+    pub fn recv_with_offset(
         &mut self,
-        io: &mut IO,
+        io: &mut SwankyChannel,
         data: &mut [[u128; NUM_LIMBS]],
         b: &[bool],
         length: usize,

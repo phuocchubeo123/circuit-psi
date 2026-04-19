@@ -35,8 +35,8 @@ name = "vole_cope"
 path = "src/vole/bin/cope.rs"
 
 [[bin]]
-name = "mascot_unauthenticated_triple"
-path = "src/mascot/bin/unauthenticated_triple.rs"
+name = "triples_test"
+path = "src/mascot/bin/triples_test.rs"
 
 [profile.release]
 lto = true

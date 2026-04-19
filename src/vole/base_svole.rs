@@ -1,7 +1,7 @@
 use crate::cope::Cope;
 use psi_aes::prg::PRG;
 use crate::comm_util::*;
-use swanky_channel_legacy::AbstractChannel;
+use crate::tcp_channel::SwankyChannel;
 
 pub type FE = crate::vole::field_config::FE;
 
@@ -13,7 +13,7 @@ pub struct BaseSvole {
 
 impl BaseSvole {
     /// Sender's constructor
-    pub fn new_sender<IO: AbstractChannel>(io: &mut IO, delta: FE, comm: &mut u64) -> Self {
+    pub fn new_sender(io: &mut SwankyChannel, delta: FE, comm: &mut u64) -> Self {
         let mut cope = Cope::new(0, crate::scalar_field::FOURQ_SCALAR_BITS);
         cope.initialize_sender(io, delta.clone(), comm);
         Self {
@@ -24,7 +24,7 @@ impl BaseSvole {
     }
 
     /// Receiver's constructor
-    pub fn new_receiver<IO: AbstractChannel>(io: &mut IO, comm: &mut u64) -> Self {
+    pub fn new_receiver(io: &mut SwankyChannel, comm: &mut u64) -> Self {
         let mut cope = Cope::new(1, crate::scalar_field::FOURQ_SCALAR_BITS);
         cope.initialize_receiver(io, comm);
         Self {
@@ -35,7 +35,7 @@ impl BaseSvole {
     }
 
     /// Sender: Triple generation
-    pub fn triple_gen_send<IO: AbstractChannel>(&mut self, io: &mut IO, share: &mut [FE], size: usize, comm: &mut u64) {
+    pub fn triple_gen_send(&mut self, io: &mut SwankyChannel, share: &mut [FE], size: usize, comm: &mut u64) {
         // Generate share_recv = share_send + delta * u_recv
         self.cope.extend_sender_batch(io, share, size, comm);
         let mut b = vec![FE::zero(); 1];
@@ -44,7 +44,7 @@ impl BaseSvole {
     }
 
     /// Receiver: Triple generation
-    pub fn triple_gen_recv<IO: AbstractChannel>(&mut self, io: &mut IO, share: &mut [FE], u: &mut [FE], size: usize, comm: &mut u64) {
+    pub fn triple_gen_recv(&mut self, io: &mut SwankyChannel, share: &mut [FE], u: &mut [FE], size: usize, comm: &mut u64) {
         // Generate share_recv = share_send + delta * u_recv
         let mut prg = PRG::new(None, 0);
         let mut x = vec![FE::zero(); 1];
@@ -61,7 +61,7 @@ impl BaseSvole {
     }
 
     /// Sender: Consistency check
-    fn sender_check<IO: AbstractChannel>(&mut self, io: &mut IO, share: &[FE], b: FE, size: usize, comm: &mut u64) {
+    fn sender_check(&mut self, io: &mut SwankyChannel, share: &[FE], b: FE, size: usize, comm: &mut u64) {
         // Generate check seed and send it to Receiver
         let mut seed = vec![[0u8; 16]; 1];
         let mut seed_prg = PRG::new(None, 0);
@@ -83,7 +83,7 @@ impl BaseSvole {
     }
 
     /// Receiver: Consistency check
-    fn receiver_check<IO: AbstractChannel>(&mut self, io: &mut IO, share: &[FE], x: &[FE], c: FE, a: FE, size: usize, comm: &mut u64) {
+    fn receiver_check(&mut self, io: &mut SwankyChannel, share: &[FE], x: &[FE], c: FE, a: FE, size: usize, comm: &mut u64) {
         let seed = receive_block::<16>(io).expect("Cannot receive seed for check base sVOLE")[0];
 
         let chi = self.generate_hash_coeff(seed, size);

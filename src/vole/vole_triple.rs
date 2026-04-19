@@ -1,6 +1,6 @@
 use crate::pre_ot::OTPre;
 use crate::comm_util::*;
-use swanky_channel_legacy::AbstractChannel;
+use crate::tcp_channel::SwankyChannel;
 use crate::base_cot::BaseCot;
 use crate::lpn::Lpn;
 use crate::mpfss_reg::MpfssReg;
@@ -131,7 +131,7 @@ pub struct VoleTriple {
 }
 
 impl VoleTriple {
-    pub fn new<IO: AbstractChannel>(party: usize, malicious: bool, io: &mut IO, param: PrimalLPNParameterFp61, comm: &mut u64) -> Self {
+    pub fn new(party: usize, malicious: bool, io: &mut SwankyChannel, param: PrimalLPNParameterFp61, comm: &mut u64) -> Self {
         let n_pre = param.n_pre;
         let t_pre = param.t_pre;
         let n = param.n;
@@ -163,7 +163,7 @@ impl VoleTriple {
         }
     }
 
-    pub fn extend_send<IO: AbstractChannel>(&mut self, io: &mut IO, y: &mut [FE], mpfss: &mut MpfssReg, pre_ot: &mut OTPre<FE_LIMBS>, lpn: &mut Lpn, key: &[FE], t: usize, comm: &mut u64) {
+    pub fn extend_send(&mut self, io: &mut SwankyChannel, y: &mut [FE], mpfss: &mut MpfssReg, pre_ot: &mut OTPre<FE_LIMBS>, lpn: &mut Lpn, key: &[FE], t: usize, comm: &mut u64) {
         mpfss.sender_init(self.delta);
         mpfss.mpfss_sender(io, pre_ot, key, y, comm);
         pre_ot.reset();
@@ -172,14 +172,14 @@ impl VoleTriple {
         lpn.compute_send(y, &key[t+1..]);
     }
 
-    pub fn extend_recv<IO: AbstractChannel>(&mut self, io: &mut IO, y: &mut [FE], z: &mut [FE], mpfss: &mut MpfssReg, pre_ot: &mut OTPre<FE_LIMBS>, lpn: &mut Lpn, mac: &[FE], u: &[FE], t: usize, comm: &mut u64) {
+    pub fn extend_recv(&mut self, io: &mut SwankyChannel, y: &mut [FE], z: &mut [FE], mpfss: &mut MpfssReg, pre_ot: &mut OTPre<FE_LIMBS>, lpn: &mut Lpn, mac: &[FE], u: &[FE], t: usize, comm: &mut u64) {
         mpfss.receiver_init();
         mpfss.mpfss_receiver(io, pre_ot, mac, u, y, z, comm);
         pre_ot.reset();
         lpn.compute_recv(y, z, &mac[t+1..], &u[t+1..]);
     }
 
-    pub fn setup_sender<IO: AbstractChannel>(&mut self, io: &mut IO, delta: FE, comm: &mut u64) {
+    pub fn setup_sender(&mut self, io: &mut SwankyChannel, delta: FE, comm: &mut u64) {
         self.delta = delta;
         *comm += send_fe(io, &[self.delta]).expect("Cannot send test delta"); //debug only
 
@@ -202,8 +202,6 @@ impl VoleTriple {
         svole0.triple_gen_send(io, &mut key, triple_n0, comm);
 
         // println!("Test base svole: {:?}", key[0]);
-
-        io.flush();
 
         let mut pre_y0 = vec![FE::zero(); self.param.n_pre0];
         self.extend_send(io, &mut pre_y0, &mut mpfss_pre0, &mut pre_ot_ini0, &mut lpn_pre0, &key, self.param.t_pre0, comm);
@@ -231,7 +229,7 @@ impl VoleTriple {
         self.pre_ot_inplace = true;
     }
 
-    pub fn setup_receiver<IO: AbstractChannel>(&mut self, io: &mut IO, comm: &mut u64) {
+    pub fn setup_receiver(&mut self, io: &mut SwankyChannel, comm: &mut u64) {
         self.delta = receive_fe(io).expect("Failed to receive test delta")[0]; //debug only
 
         let seed_pre0 = [0u8; 16];
@@ -253,8 +251,6 @@ impl VoleTriple {
         svole0.triple_gen_recv(io, &mut mac, &mut u, triple_n0, comm);
 
         // println!("Test base svole: {:?}", mac[0] - u[0] * self.delta);
-
-        io.flush();
 
         let mut pre_y0 = vec![FE::zero(); self.param.n_pre0];
         let mut pre_z0 = vec![FE::zero(); self.param.n_pre0];
@@ -289,7 +285,7 @@ impl VoleTriple {
         self.extend_initialized = true;
     }
 
-    pub fn extend_once<IO: AbstractChannel>(&mut self, io: &mut IO, data_y: &mut [FE], data_z: &mut [FE], mpfss: &mut MpfssReg, pre_ot: &mut OTPre<FE_LIMBS>, lpn: &mut Lpn, comm: &mut u64) {
+    pub fn extend_once(&mut self, io: &mut SwankyChannel, data_y: &mut [FE], data_z: &mut [FE], mpfss: &mut MpfssReg, pre_ot: &mut OTPre<FE_LIMBS>, lpn: &mut Lpn, comm: &mut u64) {
         self.cot.cot_gen_preot(io, pre_ot, self.param.t * self.param.log_bin_sz, None, comm);
         let mut pre_y = vec![FE::zero(); self.m];
         pre_y.copy_from_slice(&self.pre_y[..self.m]);
@@ -304,7 +300,7 @@ impl VoleTriple {
         self.pre_z[..self.m].copy_from_slice(&data_z[self.ot_limit..]);
     }
 
-    pub fn extend<IO: AbstractChannel>(&mut self, io: &mut IO, data_y: &mut [FE], data_z: &mut [FE], num: usize, comm: &mut u64) {
+    pub fn extend(&mut self, io: &mut SwankyChannel, data_y: &mut [FE], data_z: &mut [FE], num: usize, comm: &mut u64) {
         if self.extend_initialized == false {
             panic!("Run extend_initialization first!");
         }
@@ -379,7 +375,7 @@ impl VoleTriple {
     }
 
     // debug only
-    pub fn check_triple<IO: AbstractChannel>(&self, io: &mut IO, x: FE, y: &[FE], z: &[FE], size: usize) {
+    pub fn check_triple(&self, io: &mut SwankyChannel, x: FE, y: &[FE], z: &[FE], size: usize) {
         if self.party == 0 {
             send_fe(io, &[x]).expect("Failed to send delta test.");
             send_fe(io, &y).expect("Failed to send k test.");

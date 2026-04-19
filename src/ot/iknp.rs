@@ -1,6 +1,6 @@
 use crate::ot::OTCO;
 use crate::comm_util::*;
-use swanky_channel_legacy::AbstractChannel;
+use crate::tcp_channel::SwankyChannel;
 use psi_aes::prg::PRG;
 use std::convert::TryInto;
 
@@ -43,7 +43,7 @@ impl IKNP {
         }
     }
 
-    pub fn setup_send<IO: AbstractChannel>(&mut self, io: &mut IO, in_s: Option<&[bool]>, in_k0: Option<&[[u8; 16]]>, comm: &mut u64) {
+    pub fn setup_send(&mut self, io: &mut SwankyChannel, in_s: Option<&[bool]>, in_k0: Option<&[[u8; 16]]>, comm: &mut u64) {
         self.setup = true;
 
         if let Some(in_s) = in_s {
@@ -73,7 +73,7 @@ impl IKNP {
         self.delta = Some(bool_to_block(&self.s));
     }
 
-    pub fn setup_recv<IO: AbstractChannel>(&mut self, io: &mut IO, in_k0: Option<&[[u8; 16]]>, in_k1: Option<&[[u8; 16]]>, comm: &mut u64) {
+    pub fn setup_recv(&mut self, io: &mut SwankyChannel, in_k0: Option<&[[u8; 16]]>, in_k1: Option<&[[u8; 16]]>, comm: &mut u64) {
         self.setup = true;
 
         if let (Some(in_k0), Some(in_k1)) = (in_k0, in_k1) {
@@ -106,7 +106,7 @@ impl IKNP {
         );
     }
 
-    pub fn send_pre<IO: AbstractChannel>(&mut self, io: &mut IO, out: &mut [[u8; NUM_BYTES]], length: usize, comm: &mut u64) {
+    pub fn send_pre(&mut self, io: &mut SwankyChannel, out: &mut [[u8; NUM_BYTES]], length: usize, comm: &mut u64) {
         if !self.setup {
             self.setup_send(io, None, None, comm);
         }
@@ -131,7 +131,7 @@ impl IKNP {
         }
     }
 
-    fn send_pre_block<IO: AbstractChannel>(&mut self, io: &mut IO, out: &mut [[u8; NUM_BYTES]], length: usize, comm: &mut u64) {
+    fn send_pre_block(&mut self, io: &mut SwankyChannel, out: &mut [[u8; NUM_BYTES]], length: usize, comm: &mut u64) {
         let local_block_size = (length + NUM_BITS - 1) / NUM_BITS * NUM_BITS;
 
         let mut t = vec![[0u8; NUM_BYTES]; BLOCK_SIZE];
@@ -158,7 +158,7 @@ impl IKNP {
         *comm += 0; // Only receive data in this function, does not send anything
     }
 
-    pub fn recv_pre<IO: AbstractChannel>(&mut self, io: &mut IO, out: &mut [[u8; NUM_BYTES]], r: &[bool], length: usize, comm: &mut u64) {
+    pub fn recv_pre(&mut self, io: &mut SwankyChannel, out: &mut [[u8; NUM_BYTES]], r: &[bool], length: usize, comm: &mut u64) {
         if !self.setup {
             self.setup_recv(io, None, None, comm);
         }
@@ -198,7 +198,7 @@ impl IKNP {
         }
     }
 
-    fn recv_pre_block<IO: AbstractChannel>(&mut self, io: &mut IO, out: &mut [[u8; NUM_BYTES]], r: &[[u8; NUM_BYTES]], length: usize, comm: &mut u64) {
+    fn recv_pre_block(&mut self, io: &mut SwankyChannel, out: &mut [[u8; NUM_BYTES]], r: &[[u8; NUM_BYTES]], length: usize, comm: &mut u64) {
         let mut t = vec![[0u8; NUM_BYTES]; BLOCK_SIZE];
         let mut tmp = vec![[0u8; NUM_BYTES]; BLOCK_SIZE];
         let mut res = vec![[0u8; NUM_BYTES]; BLOCK_SIZE];
@@ -222,7 +222,7 @@ impl IKNP {
         transpose(out, &t);
     }
 
-    pub fn send_cot<IO: AbstractChannel>(&mut self, io: &mut IO, data: &mut [[u8; NUM_BYTES]], length: usize, comm: &mut u64) {
+    pub fn send_cot(&mut self, io: &mut SwankyChannel, data: &mut [[u8; NUM_BYTES]], length: usize, comm: &mut u64) {
         self.send_pre(io, data, length, comm);
 
         if self.malicious {
@@ -232,7 +232,7 @@ impl IKNP {
         }
     }
 
-    pub fn recv_cot<IO: AbstractChannel>(&mut self, io: &mut IO, data: &mut [[u8; NUM_BYTES]], r: &[bool], length: usize, comm: &mut u64) {
+    pub fn recv_cot(&mut self, io: &mut SwankyChannel, data: &mut [[u8; NUM_BYTES]], r: &[bool], length: usize, comm: &mut u64) {
         self.recv_pre(io, data, r, length, comm);
 
         if self.malicious {
@@ -240,7 +240,7 @@ impl IKNP {
         }
     }
 
-    pub fn send_check<IO: AbstractChannel>(&mut self, io: &mut IO, out: &[[u8; NUM_BYTES]], length: usize, comm: &mut u64) -> bool {
+    pub fn send_check(&mut self, io: &mut SwankyChannel, out: &[[u8; NUM_BYTES]], length: usize, comm: &mut u64) -> bool {
         let mut seed2 = [0u8; 16];
         let mut x = [0u8; NUM_BYTES];
         let mut t = [[0u8; NUM_BYTES]; 2];
@@ -251,8 +251,6 @@ impl IKNP {
         q[1] = [0u8; NUM_BYTES];
 
         seed2 = receive_block::<16>(io).expect("Failed to receive seed")[0];
-        io.flush();
-
         // println!("Seed received: {:?}", seed2);
 
         let mut chi_prg = PRG::new(Some(&seed2), 0);
@@ -288,7 +286,7 @@ impl IKNP {
         cmp_blocks(&q, &t)
     }
 
-    pub fn recv_check<IO: AbstractChannel>(&mut self, io: &mut IO, out: &[[u8; NUM_BYTES]], r: &[bool], length: usize, comm: &mut u64) {
+    pub fn recv_check(&mut self, io: &mut SwankyChannel, out: &[[u8; NUM_BYTES]], r: &[bool], length: usize, comm: &mut u64) {
         let select = [[0u8; NUM_BYTES], [255u8; NUM_BYTES]]; // zero_block and all_one_block
         let mut seed2 = [0u8; 16];
         let mut x = [0u8; NUM_BYTES];
@@ -304,7 +302,6 @@ impl IKNP {
         seed2 = tmp_seed2[0];
 
         *comm += send_block::<16>(io, &[seed2]).expect("Failed to send seed");
-        io.flush();
 
         let mut chi_prg = PRG::new(Some(&seed2), 0);
 

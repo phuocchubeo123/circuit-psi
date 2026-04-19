@@ -1,11 +1,11 @@
 use crate::{
     bedoza::{bedoza_receiver::BeDOZaReceiver, bedoza_sender::BeDOZaSender},
+    tcp_channel::SwankyChannel,
     scalar_field::FourQScalarField as FE,
     vole_triple::{PrimalLPNParameterFp61, VoleTriple},
 };
 use eyre::{Result, ensure};
 use std::collections::VecDeque;
-use swanky_channel_legacy::AbstractChannel;
 
 pub struct BufferedVoleSender {
     vole: VoleTriple,
@@ -13,8 +13,8 @@ pub struct BufferedVoleSender {
 }
 
 impl BufferedVoleSender {
-    pub fn init<C: AbstractChannel>(
-        channel: &mut C,
+    pub fn init(
+        channel: &mut SwankyChannel,
         param: PrimalLPNParameterFp61,
     ) -> Result<Self> {
         let mut comm = 0u64;
@@ -32,9 +32,9 @@ impl BufferedVoleSender {
         self.random_buffer.len()
     }
 
-    pub fn extend_random<C: AbstractChannel>(
+    pub fn extend_random(
         &mut self,
-        channel: &mut C,
+        channel: &mut SwankyChannel,
         additional: usize,
     ) -> Result<usize> {
         let mut y = vec![FE::zero(); additional];
@@ -49,9 +49,9 @@ impl BufferedVoleSender {
         Ok(additional)
     }
 
-    fn ensure_random_capacity<C: AbstractChannel>(
+    fn ensure_random_capacity(
         &mut self,
-        channel: &mut C,
+        channel: &mut SwankyChannel,
         needed: usize,
     ) -> Result<()> {
         if self.random_buffer.len() >= needed {
@@ -62,9 +62,9 @@ impl BufferedVoleSender {
         Ok(())
     }
 
-    pub fn random_auth<C: AbstractChannel>(
+    pub fn random_auth(
         &mut self,
-        channel: &mut C,
+        channel: &mut SwankyChannel,
         count: usize,
     ) -> Result<Vec<BeDOZaSender>> {
         self.ensure_random_capacity(channel, count)?;
@@ -75,9 +75,9 @@ impl BufferedVoleSender {
         Ok(out)
     }
 
-    pub fn commit_auth<C: AbstractChannel>(
+    pub fn commit_auth(
         &mut self,
-        channel: &mut C,
+        channel: &mut SwankyChannel,
         inputs: &[FE],
     ) -> Result<Vec<BeDOZaSender>> {
         self.ensure_random_capacity(channel, inputs.len())?;
@@ -95,8 +95,9 @@ impl BufferedVoleSender {
             out.push(BeDOZaSender::new(x, beta, false));
         }
 
-        channel.write_bytes(&encoded)?;
-        channel.flush()?;
+        channel
+            .send(&encoded)
+            .map_err(|e| eyre::eyre!(e.to_string()))?;
         Ok(out)
     }
 }
@@ -108,8 +109,8 @@ pub struct BufferedVoleReceiver {
 }
 
 impl BufferedVoleReceiver {
-    pub fn init<C: AbstractChannel>(
-        channel: &mut C,
+    pub fn init(
+        channel: &mut SwankyChannel,
         delta: FE,
         param: PrimalLPNParameterFp61,
     ) -> Result<Self> {
@@ -129,9 +130,9 @@ impl BufferedVoleReceiver {
         self.random_buffer.len()
     }
 
-    pub fn extend_random<C: AbstractChannel>(
+    pub fn extend_random(
         &mut self,
-        channel: &mut C,
+        channel: &mut SwankyChannel,
         additional: usize,
     ) -> Result<usize> {
         let mut k = vec![FE::zero(); additional];
@@ -148,9 +149,9 @@ impl BufferedVoleReceiver {
         Ok(additional)
     }
 
-    fn ensure_random_capacity<C: AbstractChannel>(
+    fn ensure_random_capacity(
         &mut self,
-        channel: &mut C,
+        channel: &mut SwankyChannel,
         needed: usize,
     ) -> Result<()> {
         if self.random_buffer.len() >= needed {
@@ -161,9 +162,9 @@ impl BufferedVoleReceiver {
         Ok(())
     }
 
-    pub fn random_auth<C: AbstractChannel>(
+    pub fn random_auth(
         &mut self,
-        channel: &mut C,
+        channel: &mut SwankyChannel,
         count: usize,
     ) -> Result<Vec<BeDOZaReceiver>> {
         // Debug later
@@ -175,15 +176,19 @@ impl BufferedVoleReceiver {
         Ok(out)
     }
 
-    pub fn commit_auth<C: AbstractChannel>(
+    pub fn commit_auth(
         &mut self,
-        channel: &mut C,
+        channel: &mut SwankyChannel,
         expected_count: usize,
     ) -> Result<Vec<BeDOZaReceiver>> {
         self.ensure_random_capacity(channel, expected_count)?;
 
+        let payload = channel
+            .receive()
+            .map_err(|e| eyre::eyre!(e.to_string()))?;
+        ensure!(payload.len() >= 8, "materialize payload too short");
         let mut count_bytes = [0u8; 8];
-        channel.read_bytes(&mut count_bytes)?;
+        count_bytes.copy_from_slice(&payload[..8]);
         let count = u64::from_le_bytes(count_bytes) as usize;
         ensure!(
             count == expected_count,
@@ -192,8 +197,13 @@ impl BufferedVoleReceiver {
             count
         );
 
-        let mut correction_bytes = vec![0u8; count * 32];
-        channel.read_bytes(&mut correction_bytes)?;
+        let correction_bytes = &payload[8..];
+        ensure!(
+            correction_bytes.len() == count * 32,
+            "materialize payload length mismatch: expected {} bytes, got {}",
+            count * 32,
+            correction_bytes.len()
+        );
 
         let mut out = Vec::with_capacity(count);
         for chunk in correction_bytes.chunks_exact(32) {
@@ -208,9 +218,9 @@ impl BufferedVoleReceiver {
         Ok(out)
     }
 
-    pub fn materialize_next<C: AbstractChannel>(
+    pub fn materialize_next(
         &mut self,
-        channel: &mut C,
+        channel: &mut SwankyChannel,
         expected_count: usize,
     ) -> Result<Vec<BeDOZaReceiver>> {
         self.commit_auth(channel, expected_count)

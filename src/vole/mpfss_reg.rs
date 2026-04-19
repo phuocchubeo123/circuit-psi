@@ -1,6 +1,6 @@
 use crate::pre_ot::OTPre;
 use crate::comm_util::*;
-use swanky_channel_legacy::AbstractChannel;
+use crate::tcp_channel::SwankyChannel;
 use crate::spfss_sender::SpfssSenderFp;
 use crate::spfss_receiver::SpfssRecverFp;
 use crate::vole::field_config::FE_LIMBS;
@@ -70,7 +70,7 @@ impl MpfssReg {
         }
     }
 
-    pub fn mpfss_sender<IO: AbstractChannel>(&mut self, io: &mut IO, ot: &mut OTPre<FE_LIMBS>, triple_y: &[FE], sparse_vector: &mut [FE], comm: &mut u64) {
+    pub fn mpfss_sender(&mut self, io: &mut SwankyChannel, ot: &mut OTPre<FE_LIMBS>, triple_y: &[FE], sparse_vector: &mut [FE], comm: &mut u64) {
         // triple_y_recv = triple_y_send + delta * triple_z
 
         self.triple_y.copy_from_slice(&triple_y[..self.tree_n+1]);
@@ -79,14 +79,12 @@ impl MpfssReg {
         for i in 0..self.tree_n {
             ot.choices_sender(io, comm);
         }
-        io.flush();
         ot.reset();
 
         let mut seeds = vec![FE::zero(); self.tree_n];
         if self.is_malicious {
             self.seed_expand(io, &mut seeds, self.tree_n, comm);
         }
-        io.flush();
 
         // Now start doing Spfss
         for i in 0..self.tree_n {
@@ -119,7 +117,7 @@ impl MpfssReg {
         }
     }
 
-    pub fn mpfss_receiver<IO: AbstractChannel>(&mut self, io: &mut IO, ot: &mut OTPre<FE_LIMBS>, triple_y: &[FE], triple_z: &[FE], sparse_vector_y: &mut [FE], sparse_vector_z: &mut [FE], comm: &mut u64) {
+    pub fn mpfss_receiver(&mut self, io: &mut SwankyChannel, ot: &mut OTPre<FE_LIMBS>, triple_y: &[FE], triple_z: &[FE], sparse_vector_y: &mut [FE], sparse_vector_z: &mut [FE], comm: &mut u64) {
         // triple_y_recv = triple_y_send + delta * triple_z
 
         self.triple_y.copy_from_slice(&triple_y[..self.tree_n+1]);
@@ -129,7 +127,6 @@ impl MpfssReg {
             let b = vec![false; self.tree_height - 1];
             ot.choices_recver(io, &b, comm);
         }
-        io.flush();
         ot.reset();
 
         let mut seeds = vec![FE::zero(); self.tree_n];
@@ -180,7 +177,7 @@ impl MpfssReg {
 
     }
 
-    pub fn seed_expand<IO: AbstractChannel>(&mut self, io: &mut IO, seed: &mut [FE], threads: usize, comm: &mut u64) {
+    pub fn seed_expand(&mut self, io: &mut SwankyChannel, seed: &mut [FE], threads: usize, comm: &mut u64) {
         let mut sd = [0u8; 16];
         if self.party == 0 {
             sd = receive_block::<16>(io).expect("Failed to receive seed")[0];
