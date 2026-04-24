@@ -58,5 +58,17 @@ path = "src/bin/bedoza/create_fake_triples.rs"
 name = "test_batch_multiply"
 path = "src/bin/bedoza/test_batch_multiply.rs"
 
+[[bin]]
+name = "test_mq_rpmt"
+path = "src/bin/circuit-psi/test_mq_rpmt.rs"
+
+[[bin]]
+name = "inspect_shuffled_oprf"
+path = "src/bin/circuit-psi/inspect_shuffled_oprf.rs"
+
+[[bin]]
+name = "test_psi_sum"
+path = "src/bin/circuit-psi/test_psi_sum.rs"
+
 [profile.release]
 lto = true

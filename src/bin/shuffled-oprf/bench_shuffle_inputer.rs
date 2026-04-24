@@ -59,7 +59,7 @@ fn main() -> Result<()> {
         swanky.bytes_sent(),
         swanky.bytes_received(),
     );
-    println!("output_count={}", shuffled.len());
+    println!("output_count={}", shuffled.shuffled_oprf.len());
 
     Ok(())
 }

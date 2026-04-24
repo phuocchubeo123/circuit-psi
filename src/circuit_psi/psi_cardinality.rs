@@ -121,7 +121,10 @@ impl PsiCardinalitySender {
             channel,
         )?;
 
-        Ok(intersection_cardinality(&sender_oprfs, &receiver_oprfs))
+        Ok(intersection_cardinality(
+            &sender_oprfs.shuffled_oprf,
+            &receiver_oprfs.shuffled_oprf,
+        ))
     }
 }
 
@@ -202,7 +205,10 @@ impl PsiCardinalityReceiver {
             channel,
         )?;
 
-        Ok(intersection_cardinality(&sender_oprfs, &receiver_oprfs))
+        Ok(intersection_cardinality(
+            &sender_oprfs.shuffled_oprf,
+            &receiver_oprfs.shuffled_oprf,
+        ))
     }
 }
 

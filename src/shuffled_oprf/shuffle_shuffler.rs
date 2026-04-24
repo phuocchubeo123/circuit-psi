@@ -23,6 +23,12 @@ use rand::{Rng, RngExt, SeedableRng, rngs::StdRng};
 // - Shuffler (this module, previously "verifier"): owns permutation and key delta_1.
 // - Inputer (peer, previously "prover"): owns inputs and key delta_0.
 
+pub struct ShufflerOutput {
+    pub shuffled_oprf: Vec<Group>,
+    pub unshuffled_oprf: Vec<Group>,
+    pub authenticated_permutation: Vec<BeDOZaSender>,
+}
+
 fn batch_invert_nonzero(values: &[FE], context: &str) -> Result<Vec<FE>> {
     ensure!(!values.is_empty(), "{}: empty input", context);
 
@@ -70,12 +76,12 @@ fn checked_permute<T: Clone>(vals: &[T], permutation: &[usize]) -> Result<Vec<T>
 #[derive(Clone, Copy, Debug)]
 pub struct Shuffler {
     delta_1: FE,
-    vole_key: FE,
+    k1: FE,
 }
 
 impl Shuffler {
-    pub fn new(delta_1: FE, vole_key: FE) -> Self {
-        Self { delta_1, vole_key }
+    pub fn new(delta_1: FE, k1: FE) -> Self {
+        Self { delta_1, k1 }
     }
 
     pub fn delta_1(&self) -> FE {
@@ -83,7 +89,7 @@ impl Shuffler {
     }
 
     pub fn vole_key(&self) -> FE {
-        self.vole_key
+        self.k1
     }
 
     pub fn step0_authenticate_oprf_key_and_xi_and_ri_and_send_pi(
@@ -106,7 +112,7 @@ impl Shuffler {
             .map_err(|e| anyhow!("failed to receive authenticated k0: {e}"))?[0];
 
         let shuffler_k1_sender = vole_sender
-            .commit_auth(channel, &[self.vole_key])
+            .commit_auth(channel, &[self.k1])
             .map_err(|e| anyhow!("failed to authenticate k1: {e}"))?[0];
         let shuffler_key_share = BeDOZa::new(shuffler_k1_sender, inputer_k0_receiver);
 
@@ -172,9 +178,9 @@ impl Shuffler {
         Ok(product_commitments)
     }
 
-    pub fn step2_vole_share_x_times_k1_and_authenticate(
+    pub fn step2_vole_share_r_times_k1_and_authenticate(
         &self,
-        authenticated_x_receiver: &[BeDOZaReceiver],
+        authenticated_r_receiver: &[BeDOZaReceiver],
         authenticated_k1_sender: &BeDOZaSender,
         vole_receiver: &mut BufferedVoleReceiver,
         vole_sender: &mut BufferedVoleSender,
@@ -182,14 +188,14 @@ impl Shuffler {
         channel: &mut SwankyChannel,
     ) -> Result<(Vec<FE>, Vec<BeDOZaReceiver>, Vec<BeDOZaSender>)> {
         ensure!(
-            !authenticated_x_receiver.is_empty(),
-            "step2 cannot run on empty x commitments"
+            !authenticated_r_receiver.is_empty(),
+            "step2 cannot run on empty r commitments"
         );
 
-        // 1) Get additive shares of x_i * k1 from product VOLE.
-        let n = authenticated_x_receiver.len();
+        // 1) Get additive shares of r_i * k1 from product VOLE.
+        let n = authenticated_r_receiver.len();
 
-        // Should have ui + vi = xi * k1
+        // Should have u_i + v_i = r_i * k1
         let v_values: Vec<FE> = k1_mul_vole_receiver
             .commit_auth(channel, n)
             .map_err(|e| {
@@ -204,23 +210,19 @@ impl Shuffler {
             .map_err(|e| anyhow!("step2 failed to sample random v0 share: {e}"))?[0]
             .tag();
 
-        // 2) Receive inputer's authenticated u_i, x0 and u0 under delta_1.
+        // 2) Receive inputer's authenticated u_i, r0 and u0 under delta_1.
         let authenticated_u_receiver: Vec<BeDOZaReceiver> =
             vole_receiver
                 .commit_auth(channel, n)
                 .map_err(|e| anyhow!("failed to materialize receiver VOLE outputs: {e}"))?;
 
-        println!("Done until receiving authenticated u_i");
-
-        let authenticated_x0_receiver = vole_receiver
+        let authenticated_r0_receiver = vole_receiver
             .commit_auth(channel, 1)
             .map_err(|e| anyhow!("failed to materialize receiver VOLE outputs: {e}"))?[0];
 
         let authenticated_u0_receiver = vole_receiver
             .commit_auth(channel, 1)
             .map_err(|e| anyhow!("failed to materialize receiver VOLE outputs: {e}"))?[0];
-
-        println!("Done until receiving authenticated x0 and u0");
 
         // 3) Send authenticated v0 and v_i under delta_0.
         let authenticated_v0_sender = vole_sender
@@ -231,27 +233,21 @@ impl Shuffler {
             .commit_auth(channel, &v_values)
             .map_err(|e| anyhow!("failed to materialize sender VOLE inputs: {e}"))?;
 
-        println!("Done until sending authenticated vi and v0");
-
-        // 4) Jointly sample a seed, open x/u linear combinations, and check x*k1 = u + v.
+        // 4) Jointly sample a seed, open r/u linear combinations, and check r*k1 = u + v.
         let seed = random_32bytes_coin(false, channel)
             .map_err(|e| anyhow!("step2 failed to jointly sample seed: {}", e))?;
         let mut seeded_rng = StdRng::from_seed(seed);
         let coeffs = random_fe_vec_from_rng(&mut seeded_rng, n)?;
 
-        println!("Done until sampling random linear combination coefficients");
-
         let u_linear =
             linear_comb_receiver(&authenticated_u_receiver, &coeffs, "step2 u linear comb")?
                 + authenticated_u0_receiver;
-        let x_linear =
-            linear_comb_receiver(authenticated_x_receiver, &coeffs, "step2 x linear comb")?
-                + authenticated_x0_receiver;
-        let opened = receive_open_shares(&[u_linear, x_linear], channel)?;
+        let r_linear =
+            linear_comb_receiver(authenticated_r_receiver, &coeffs, "step2 r linear comb")?
+                + authenticated_r0_receiver;
+        let opened = receive_open_shares(&[u_linear, r_linear], channel)?;
         let u_open = opened[0];
-        let x_open = opened[1];
-
-        println!("Done until receiving opened linear combinations of x and u");
+        let r_open = opened[1];
 
         let v_linear_value = coeffs
             .iter()
@@ -260,18 +256,16 @@ impl Shuffler {
             .fold(FE::zero(), |acc, term| acc + term)
             + v0_value;
         ensure!(
-            u_open + v_linear_value == x_open * self.vole_key,
-            "step2 consistency check failed: u* + v* != x* * k1"
+            u_open + v_linear_value == r_open * self.k1,
+            "step2 consistency check failed: u* + v* != r* * k1"
         );
 
-        // 5) Open authenticated (x*k1 - u - v) so inputer can verify with its MAC.
+        // 5) Open authenticated (r*k1 - u - v) so inputer can verify with its MAC.
         let v_linear = linear_comb_sender(&authenticated_v_sender, &coeffs, "step2 v linear comb")?
             + authenticated_v0_sender;
-        let authenticated_x_times_k1_minus_uv =
-            (*authenticated_k1_sender * x_open) - u_open - v_linear;
-        send_open_shares(&[authenticated_x_times_k1_minus_uv], channel)?;
-
-        println!("Done until sending for verification of v");
+        let authenticated_r_times_k1_minus_uv =
+            (*authenticated_k1_sender * r_open) - u_open - v_linear;
+        send_open_shares(&[authenticated_r_times_k1_minus_uv], channel)?;
 
         Ok((v_values, authenticated_u_receiver, authenticated_v_sender))
     }
@@ -285,7 +279,7 @@ impl Shuffler {
         auth_vole_sender: &mut BufferedVoleSender,
         rng: &mut RNG,
         channel: &mut SwankyChannel,
-    ) -> Result<(Vec<FE>, Vec<BeDOZaSender>)> {
+    ) -> Result<(Vec<FE>, Vec<FE>, Vec<BeDOZaSender>)> {
         ensure!(
             authenticated_r_x_plus_k0_receiver.len() == authenticated_u_receiver.len(),
             "step3 length mismatch: r(x+k0) commitments {} vs u commitments {}",
@@ -361,7 +355,7 @@ impl Shuffler {
             channel,
         )?;
 
-        Ok((inverse_values, authenticated_inverse_sender))
+        Ok((r_x_k_values, inverse_values, authenticated_inverse_sender))
     }
 
     pub fn step4_receive_g_ri_and_verify_pad_consistency_proof(
@@ -529,7 +523,7 @@ impl Shuffler {
         x: FE,
         authenticated_x_powers_sender: &[BeDOZaSender],
         channel: &mut SwankyChannel,
-    ) -> Result<Vec<Group>> {
+    ) -> Result<(Vec<Group>, Vec<Group>)> {
         ensure!(
             permutation.len() == g_ri.len() && permutation.len() == inverse_values.len(),
             "step6 length mismatch: pi={}, g^ri={}, inverse={}",
@@ -558,6 +552,11 @@ impl Shuffler {
             .iter()
             .zip(permuted_inverse_values.iter())
             .map(|(g_r_pi_i, inv_pi_i)| g_r_pi_i.scalar_mul(inv_pi_i))
+            .collect();
+        let unshuffled_oprf: Vec<Group> = g_ri
+            .iter()
+            .zip(inverse_values.iter())
+            .map(|(g_ri, inverse)| g_ri.scalar_mul(inverse))
             .collect();
         send_group_elements(&shuffled_oprf, channel)
             .map_err(|e| anyhow!("step6 failed to send shuffled OPRF points: {}", e))?;
@@ -598,7 +597,7 @@ impl Shuffler {
             opened_left_product.as_point() == opened_right_product.as_point(),
             "step6 failed: opened left OPRF product does not match opened right OPRF product"
         );
-        Ok(shuffled_oprf)
+        Ok((shuffled_oprf, unshuffled_oprf))
     }
 
     pub fn run_full_shuffled_oprf<RNG: Rng>(
@@ -609,7 +608,7 @@ impl Shuffler {
         auth_vole_receiver: &mut BufferedVoleReceiver,
         k1_mul_vole_receiver: &mut BufferedVoleReceiver,
         channel: &mut SwankyChannel,
-    ) -> Result<Vec<Group>> {
+    ) -> Result<ShufflerOutput> {
         ensure!(
             !permutation.is_empty(),
             "run_full_shuffled_oprf: permutation cannot be empty"
@@ -634,15 +633,15 @@ impl Shuffler {
                 channel,
             )?;
         let (v_values, authenticated_u_receiver, authenticated_v_sender) = self
-            .step2_vole_share_x_times_k1_and_authenticate(
-                &authenticated_inputs,
+            .step2_vole_share_r_times_k1_and_authenticate(
+                &authenticated_ri_receiver,
                 shuffler_key_share.bedoza_sender(),
                 auth_vole_receiver,
                 auth_vole_sender,
                 k1_mul_vole_receiver,
                 channel,
             )?;
-        let (inverse_values, authenticated_inverse_sender) = self
+        let (_r_x_k_values, inverse_values, authenticated_inverse_sender) = self
             .step3_receive_ri_x_plus_k0_plus_ui_and_receive_reauthenticate_and_inverse(
                 &authenticated_r_x_plus_k0_receiver,
                 &authenticated_u_receiver,
@@ -652,6 +651,7 @@ impl Shuffler {
                 rng,
                 channel,
             )?;
+
         let g_ri = self.step4_receive_g_ri_and_verify_pad_consistency_proof(
             &authenticated_ri_receiver,
             channel,
@@ -663,7 +663,8 @@ impl Shuffler {
                 auth_vole_sender,
                 channel,
             )?;
-        self.step6_send_shuffled_oprf_points_and_open_and_verify_products(
+        let (shuffled_oprf, unshuffled_oprf) =
+            self.step6_send_shuffled_oprf_points_and_open_and_verify_products(
             permutation,
             &g_ri,
             &inverse_values,
@@ -671,6 +672,12 @@ impl Shuffler {
             x,
             &authenticated_x_powers_sender,
             channel,
-        )
+        )?;
+
+        Ok(ShufflerOutput {
+            shuffled_oprf,
+            unshuffled_oprf,
+            authenticated_permutation: authenticated_pi_sender,
+        })
     }
 }
