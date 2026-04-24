@@ -1,7 +1,7 @@
 use crate::{
     bedoza::{bedoza_receiver::BeDOZaReceiver, bedoza_sender::BeDOZaSender},
+    math::defines::FE,
     tcp_channel::SwankyChannel,
-    scalar_field::FourQScalarField as FE,
     vole_triple::{PrimalLPNParameterFp61, VoleTriple},
 };
 use eyre::{Result, ensure};
@@ -13,10 +13,7 @@ pub struct BufferedVoleSender {
 }
 
 impl BufferedVoleSender {
-    pub fn init(
-        channel: &mut SwankyChannel,
-        param: PrimalLPNParameterFp61,
-    ) -> Result<Self> {
+    pub fn init(channel: &mut SwankyChannel, param: PrimalLPNParameterFp61) -> Result<Self> {
         let mut comm = 0u64;
         let mut vole = VoleTriple::new(1, true, channel, param, &mut comm);
         vole.setup_receiver(channel, &mut comm);
@@ -44,16 +41,13 @@ impl BufferedVoleSender {
             .extend(channel, &mut y, &mut z, additional, &mut comm);
 
         for i in 0..additional {
-            self.random_buffer.push_back(BeDOZaSender::new(z[i], y[i], false));
+            self.random_buffer
+                .push_back(BeDOZaSender::new(z[i], y[i], false));
         }
         Ok(additional)
     }
 
-    fn ensure_random_capacity(
-        &mut self,
-        channel: &mut SwankyChannel,
-        needed: usize,
-    ) -> Result<()> {
+    fn ensure_random_capacity(&mut self, channel: &mut SwankyChannel, needed: usize) -> Result<()> {
         if self.random_buffer.len() >= needed {
             return Ok(());
         }
@@ -149,11 +143,7 @@ impl BufferedVoleReceiver {
         Ok(additional)
     }
 
-    fn ensure_random_capacity(
-        &mut self,
-        channel: &mut SwankyChannel,
-        needed: usize,
-    ) -> Result<()> {
+    fn ensure_random_capacity(&mut self, channel: &mut SwankyChannel, needed: usize) -> Result<()> {
         if self.random_buffer.len() >= needed {
             return Ok(());
         }
@@ -183,9 +173,7 @@ impl BufferedVoleReceiver {
     ) -> Result<Vec<BeDOZaReceiver>> {
         self.ensure_random_capacity(channel, expected_count)?;
 
-        let payload = channel
-            .receive()
-            .map_err(|e| eyre::eyre!(e.to_string()))?;
+        let payload = channel.receive().map_err(|e| eyre::eyre!(e.to_string()))?;
         ensure!(payload.len() >= 8, "materialize payload too short");
         let mut count_bytes = [0u8; 8];
         count_bytes.copy_from_slice(&payload[..8]);

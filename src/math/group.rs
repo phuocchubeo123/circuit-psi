@@ -1,4 +1,4 @@
-use crate::bedoza::defines::FE;
+use crate::math::defines::FE;
 use anyhow::{Result, anyhow};
 use fourq::point::Point;
 use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
@@ -82,6 +82,10 @@ impl Group {
     pub fn from_point(point: CurvePoint) -> Self {
         let affine = point_to_affine(&point).expect("Failed to convert FourQ point to affine");
         Self { affine }
+    }
+
+    pub fn to_bytes(&self) -> [u8; GROUP_POINT_BYTES] {
+        encode_affine(self.affine)
     }
 }
 
@@ -482,7 +486,7 @@ fn neg_affine(mut point: PointAffine) -> PointAffine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bedoza::defines::random_fe_vec;
+    use crate::math::defines::random_fe_vec;
 
     #[test]
     fn pippenger_matches_naive_msm() -> Result<()> {

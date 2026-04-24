@@ -1,21 +1,26 @@
-use psi_aes::hash::Hash;
 use crate::comm_util::*;
 use crate::ot::comm_utils::{receive_point, send_point};
 use crate::tcp_channel::SwankyChannel;
-use p256::elliptic_curve::sec1::{ToEncodedPoint, FromEncodedPoint};
-use p256::elliptic_curve::{Field, Group}; 
-use p256::{Scalar, AffinePoint, ProjectivePoint};
+use p256::elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
+use p256::elliptic_curve::{Field, Group};
+use p256::{AffinePoint, ProjectivePoint, Scalar};
+use psi_aes::hash::Hash;
 
-pub struct OTCO {
-}
+pub struct OTCO {}
 
 impl OTCO {
     pub fn new() -> Self {
-        Self { }
+        Self {}
     }
 
     /// Sender's OT implementation
-    pub fn send(&mut self, io: &mut SwankyChannel, data0: &[[u8; 16]], data1: &[[u8; 16]], comm: &mut u64) {
+    pub fn send(
+        &mut self,
+        io: &mut SwankyChannel,
+        data0: &[[u8; 16]],
+        data1: &[[u8; 16]],
+        comm: &mut u64,
+    ) {
         let length = data0.len();
         let mut rng = rand08::thread_rng();
 
@@ -41,7 +46,7 @@ impl OTCO {
         for i in 0..length {
             let b_point = receive_point(io).expect("Cannot receive b_point");
             let b_affine = AffinePoint::from_encoded_point(&b_point).unwrap();
-                // .expect("Failed to decode AffinePoint from EncodedPoint");
+            // .expect("Failed to decode AffinePoint from EncodedPoint");
             let B_projective = ProjectivePoint::from(b_affine);
 
             // Compute B[i] * a
@@ -66,12 +71,19 @@ impl OTCO {
             let encrypted0 = xor_blocks(&data0[i], &key_b);
             let encrypted1 = xor_blocks(&data1[i], &key_ba);
 
-            *comm += send_block::<16>(io, &[encrypted0, encrypted1]).expect("Cannot send encrypted data in OTCO sender.");
+            *comm += send_block::<16>(io, &[encrypted0, encrypted1])
+                .expect("Cannot send encrypted data in OTCO sender.");
         }
     }
 
     /// Receiver's OT implementation
-    pub fn recv(&mut self, io: &mut SwankyChannel, choices: &[bool], output: &mut Vec<[u8; 16]>, comm: &mut u64) {
+    pub fn recv(
+        &mut self,
+        io: &mut SwankyChannel,
+        choices: &[bool],
+        output: &mut Vec<[u8; 16]>,
+        comm: &mut u64,
+    ) {
         let length = choices.len();
         let mut rng = rand08::thread_rng();
 
@@ -80,7 +92,7 @@ impl OTCO {
 
         let A_encoded = receive_point(io).expect("Cannot receive encoded A");
         let A_affine = AffinePoint::from_encoded_point(&A_encoded).unwrap();
-            // .expect("Invalid A point received");
+        // .expect("Invalid A point received");
         let A_projective = ProjectivePoint::from(A_affine);
 
         // Compute and send B points
@@ -104,7 +116,8 @@ impl OTCO {
                 i as u64,
             );
 
-            let encrypted = receive_block::<16>(io).expect("Cannot receive encrypted data from sender");
+            let encrypted =
+                receive_block::<16>(io).expect("Cannot receive encrypted data from sender");
             output.push(if choices[i] {
                 xor_blocks(&encrypted[1], &key_as)
             } else {

@@ -29,6 +29,14 @@ aes = "0.8.4"
 p256 = "0.13.2"
 clap = { version = "4.5.38", features = ["derive"] }
 sha2 = "0.10.8"
+blst = "0.3.16"
+blstrs = "0.7.1"
+group = "0.13.0"
+ark-bls12-381 = "0.5.0"
+ark-ec = "0.5.0"
+ark-ff = "0.5.0"
+pasta_curves = "0.5.1"
+ark-pallas = "0.5.0"
 
 [[bin]]
 name = "vole_cope"
@@ -37,6 +45,18 @@ path = "src/vole/bin/cope.rs"
 [[bin]]
 name = "triples_test"
 path = "src/mascot/bin/triples_test.rs"
+
+[[bin]]
+name = "test_psi_cardinality"
+path = "src/bin/circuit-psi/test_psi_cardinality.rs"
+
+[[bin]]
+name = "create_fake_triples"
+path = "src/bin/bedoza/create_fake_triples.rs"
+
+[[bin]]
+name = "test_batch_multiply"
+path = "src/bin/bedoza/test_batch_multiply.rs"
 
 [profile.release]
 lto = true

@@ -1,10 +1,6 @@
+use crate::math::defines::{FE, FE_LIMBS};
 use aes::Aes256;
 use aes::cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray};
-
-pub type FE = crate::scalar_field::FourQScalarField;
-
-// FE_LIMBS = FE length / 2 (for 32-byte FE represented as two 16-byte u128 limbs).
-pub const FE_LIMBS: usize = 2;
 
 pub struct TwoKeyPRP {}
 
@@ -34,8 +30,14 @@ impl TwoKeyPRP {
     }
 
     pub fn node_expand_2to4(&self, children: &mut [FE], parents: &[FE]) {
-        assert!(children.len() >= 4, "node_expand_2to4 expects at least 4 children");
-        assert!(parents.len() >= 2, "node_expand_2to4 expects at least 2 parents");
+        assert!(
+            children.len() >= 4,
+            "node_expand_2to4 expects at least 4 children"
+        );
+        assert!(
+            parents.len() >= 2,
+            "node_expand_2to4 expects at least 2 parents"
+        );
         self.node_expand_1to2(&mut children[0..2], &parents[0]);
         self.node_expand_1to2(&mut children[2..4], &parents[1]);
     }

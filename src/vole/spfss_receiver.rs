@@ -1,14 +1,14 @@
-use crate::comm_util::*;
-use crate::pre_ot::OTPre;
-use crate::tcp_channel::SwankyChannel;
-use crate::vole::field_config::TwoKeyPRP;
-use crate::vole::field_config::FE_LIMBS;
-use psi_aes::prg::PRG;
+use crate::{
+    comm_util::*,
+    math::defines::{FE, FE_LIMBS},
+    pre_ot::OTPre,
+    tcp_channel::SwankyChannel,
+    vole::field_config::TwoKeyPRP,
+};
 use psi_aes::hash::Hash;
-use std::convert::TryInto;
+use psi_aes::prg::PRG;
 use rayon::prelude::*;
-
-pub type FE = crate::vole::field_config::FE;
+use std::convert::TryInto;
 
 fn fe_from_digest(_hash: &Hash, digest: [u8; 32]) -> FE {
     FE::from_bytes_le_mod_order(&digest)
@@ -51,7 +51,7 @@ impl SpfssRecverFp {
 
     pub fn get_index(&self) -> usize {
         let mut choice_pos = 0;
-        for i in 0..self.depth-1 {
+        for i in 0..self.depth - 1 {
             choice_pos <<= 1;
             if !self.b[i] {
                 choice_pos += 1;
@@ -61,7 +61,13 @@ impl SpfssRecverFp {
     }
 
     /// Receive the message and reconstruct the tree.
-    pub fn recv(&mut self, io: &mut SwankyChannel, ot: &mut OTPre<FE_LIMBS>, s: usize, comm: &mut u64) {
+    pub fn recv(
+        &mut self,
+        io: &mut SwankyChannel,
+        ot: &mut OTPre<FE_LIMBS>,
+        s: usize,
+        comm: &mut u64,
+    ) {
         let mut receive_data = vec![[0u128; FE_LIMBS]; self.depth - 1];
         ot.recv(io, &mut receive_data, &self.b, self.depth - 1, s, comm);
 
@@ -136,10 +142,7 @@ impl SpfssRecverFp {
         let tmp = self.ggm_tree.clone();
 
         for i in (0..item_n).step_by(2).rev() {
-            prp.node_expand_2to4(
-                &mut self.ggm_tree[i * 2..i * 2 + 4],
-                &tmp[i..i + 2],
-            );
+            prp.node_expand_2to4(&mut self.ggm_tree[i * 2..i * 2 + 4], &tmp[i..i + 2]);
         }
     }
 

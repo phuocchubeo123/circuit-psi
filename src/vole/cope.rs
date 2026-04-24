@@ -1,21 +1,22 @@
-use crate::ot::OTCO;
+use crate::{
+    comm_util::*,
+    math::{defines::FE, scalar_field::random_fourq_elements_from_prg},
+    ot::OTCO,
+    pre_ot::OTPre,
+    tcp_channel::SwankyChannel,
+};
 use psi_aes::prg::PRG;
-use crate::comm_util::*;
-use crate::pre_ot::OTPre;
-use crate::tcp_channel::SwankyChannel;
 use std::time::Instant;
 
-pub type FE = crate::vole::field_config::FE;
-
 pub struct Cope {
-    party: u8,                     // 0 for sender, 1 for receiver
-    m: usize,                      // Number of field elements
-    delta: Option<FE>,             // Delta value for the sender
-    delta_bool: Vec<bool>,         // Boolean representation of delta
-    prg_g0: Option<Vec<PRG>>,      // PRGs for the 0-choice
-    prg_g1: Option<Vec<PRG>>,      // PRGs for the 1-choice (receiver)
-    mask: u128,                    // Mask for modular reduction
-    powers_of_two: Vec<FE>,        // Precomputed powers of two
+    party: u8,                // 0 for sender, 1 for receiver
+    m: usize,                 // Number of field elements
+    delta: Option<FE>,        // Delta value for the sender
+    delta_bool: Vec<bool>,    // Boolean representation of delta
+    prg_g0: Option<Vec<PRG>>, // PRGs for the 0-choice
+    prg_g1: Option<Vec<PRG>>, // PRGs for the 1-choice (receiver)
+    mask: u128,               // Mask for modular reduction
+    powers_of_two: Vec<FE>,   // Precomputed powers of two
 }
 
 const KEY_OT_LIMBS: usize = 1;
@@ -82,8 +83,16 @@ impl Cope {
                 .collect(),
         );
 
-        assert_eq!(k.len(), self.m, "Mismatch in key length during initialization");
-        assert_eq!(self.prg_g0.as_ref().unwrap().len(), self.m, "Mismatch in prg_g0 length after initialization");
+        assert_eq!(
+            k.len(),
+            self.m,
+            "Mismatch in key length during initialization"
+        );
+        assert_eq!(
+            self.prg_g0.as_ref().unwrap().len(),
+            self.m,
+            "Mismatch in prg_g0 length after initialization"
+        );
     }
 
     // Same as initialize_sender, but key OTs are provided by precomputed OT extension.
@@ -119,7 +128,11 @@ impl Cope {
                 .collect(),
         );
 
-        assert_eq!(k.len(), self.m, "Mismatch in key length during initialization");
+        assert_eq!(
+            k.len(),
+            self.m,
+            "Mismatch in key length during initialization"
+        );
         assert_eq!(
             self.prg_g0.as_ref().unwrap().len(),
             self.m,
@@ -223,8 +236,13 @@ impl Cope {
             assert_eq!(w.len(), self.m, "w length does not match self.m");
 
             for (i, prg) in prgs.iter_mut().enumerate() {
-                assert!(i < self.m, "Index out of bounds: i = {}, self.m = {}", i, self.m);
-                crate::scalar_field::random_fourq_elements_from_prg(prg, &mut [w[i]]);
+                assert!(
+                    i < self.m,
+                    "Index out of bounds: i = {}, self.m = {}",
+                    i,
+                    self.m
+                );
+                random_fourq_elements_from_prg(prg, &mut [w[i]]);
             }
         }
 
@@ -244,7 +262,13 @@ impl Cope {
         self.prm2pr(&v)
     }
 
-    pub fn extend_sender_batch(&mut self, io: &mut SwankyChannel, ret: &mut [FE], size: usize, comm: &mut u64) {
+    pub fn extend_sender_batch(
+        &mut self,
+        io: &mut SwankyChannel,
+        ret: &mut [FE],
+        size: usize,
+        comm: &mut u64,
+    ) {
         // Generate ret_recv = ret_send + delta * u_recv
 
         let mut w = vec![vec![FE::zero(); size]; self.m];
@@ -253,7 +277,7 @@ impl Cope {
         // Generate random w values for the batch
         if let Some(prgs) = &mut self.prg_g0 {
             for (i, prg) in prgs.iter_mut().enumerate() {
-                crate::scalar_field::random_fourq_elements_from_prg(prg, &mut w[i]);
+                random_fourq_elements_from_prg(prg, &mut w[i]);
             }
         }
 
@@ -288,8 +312,8 @@ impl Cope {
         // Generate random w0 and w1 values
         if let (Some(prgs_g0), Some(prgs_g1)) = (&mut self.prg_g0, &mut self.prg_g1) {
             for i in 0..self.m {
-                crate::scalar_field::random_fourq_elements_from_prg(&mut prgs_g0[i], &mut [w0[i]]);
-                crate::scalar_field::random_fourq_elements_from_prg(&mut prgs_g1[i], &mut [w1[i]]);
+                random_fourq_elements_from_prg(&mut prgs_g0[i], &mut [w0[i]]);
+                random_fourq_elements_from_prg(&mut prgs_g1[i], &mut [w1[i]]);
 
                 w1[i] = w1[i] + u;
                 tau[i] = w0[i] - w1[i];
@@ -303,7 +327,14 @@ impl Cope {
         self.prm2pr(&w0)
     }
 
-    pub fn extend_receiver_batch(&mut self, io: &mut SwankyChannel, ret: &mut [FE], u: &[FE], size: usize, comm: &mut u64) {
+    pub fn extend_receiver_batch(
+        &mut self,
+        io: &mut SwankyChannel,
+        ret: &mut [FE],
+        u: &[FE],
+        size: usize,
+        comm: &mut u64,
+    ) {
         // Generate ret_recv = ret_send + delta * u_recv
 
         let mut w0 = vec![vec![FE::zero(); size]; self.m];
@@ -312,12 +343,11 @@ impl Cope {
 
         let start = Instant::now();
 
-
         // Generate random w0 and w1 values
         if let (Some(prgs_g0), Some(prgs_g1)) = (&mut self.prg_g0, &mut self.prg_g1) {
             for i in 0..self.m {
-                crate::scalar_field::random_fourq_elements_from_prg(&mut prgs_g0[i], &mut w0[i]);
-                crate::scalar_field::random_fourq_elements_from_prg(&mut prgs_g1[i], &mut w1[i]);
+                random_fourq_elements_from_prg(&mut prgs_g0[i], &mut w0[i]);
+                random_fourq_elements_from_prg(&mut prgs_g1[i], &mut w1[i]);
 
                 for j in 0..size {
                     w1[i][j] = w1[i][j] + u[j];
@@ -327,8 +357,11 @@ impl Cope {
         }
 
         let duration = start.elapsed();
-        println!("Time to generate {} random elements: {:?}", self.m * size * 2, duration);
-
+        println!(
+            "Time to generate {} random elements: {:?}",
+            self.m * size * 2,
+            duration
+        );
 
         // Send tau to the sender
         let tau_flat: Vec<FE> = tau.iter().flat_map(|row| row.iter().cloned()).collect();
@@ -342,7 +375,6 @@ impl Cope {
         self.prm2pr_batch(ret, &w0);
     }
 
-
     /// Aggregates a vector of field elements into a single field element using precomputed powers of two.
     fn prm2pr(&self, elements: &[FE]) -> FE {
         elements
@@ -354,9 +386,10 @@ impl Cope {
     /// Aggregates a batch of vectors of field elements into a result array using precomputed powers of two.
     fn prm2pr_batch(&self, ret: &mut [FE], elements: &[Vec<FE>]) {
         for (j, result) in ret.iter_mut().enumerate() {
-            *result = elements.iter().zip(&self.powers_of_two).fold(FE::zero(), |acc, (row, power)| {
-                acc + (row[j] * *power)
-            });
+            *result = elements
+                .iter()
+                .zip(&self.powers_of_two)
+                .fold(FE::zero(), |acc, (row, power)| acc + (row[j] * *power));
         }
     }
 

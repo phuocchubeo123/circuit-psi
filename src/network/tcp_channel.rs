@@ -102,4 +102,3 @@ pub fn listen_to(addr: &str) -> Result<SwankyChannel> {
     let (stream, _) = listener.accept()?;
     Ok(SwankyChannel::new(stream))
 }
-

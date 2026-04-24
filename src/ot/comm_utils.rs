@@ -1,6 +1,6 @@
+use crate::tcp_channel::SwankyChannel;
 use p256::EncodedPoint;
 use std::io;
-use crate::tcp_channel::SwankyChannel;
 
 pub fn send_point(channel: &mut SwankyChannel, point: &EncodedPoint) -> io::Result<u64> {
     let bytes = point.as_bytes();

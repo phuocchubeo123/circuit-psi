@@ -1,6 +1,5 @@
 use crate::{
-    bedoza::{comm_util::send_fe_vec, defines::FE},
-    network::tcp_channel::SwankyChannel,
+    bedoza::comm_util::send_fe_vec, math::defines::FE, network::tcp_channel::SwankyChannel,
 };
 use anyhow::{Result, anyhow, ensure};
 use std::ops::{Add, Mul, Sub};
@@ -30,7 +29,10 @@ impl BeDOZaSender {
     }
 }
 
-pub fn send_open_shares(bedoza_senders: &[BeDOZaSender], channel: &mut SwankyChannel) -> Result<()> {
+pub fn send_open_shares(
+    bedoza_senders: &[BeDOZaSender],
+    channel: &mut SwankyChannel,
+) -> Result<()> {
     let vals: Vec<FE> = bedoza_senders
         .iter()
         .map(|bedoza_sender| bedoza_sender.val())
@@ -66,7 +68,6 @@ pub fn linear_comb_sender(
     }
     Ok(acc)
 }
-
 
 impl Add<&BeDOZaSender> for &BeDOZaSender {
     type Output = BeDOZaSender;

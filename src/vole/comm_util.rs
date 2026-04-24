@@ -1,7 +1,6 @@
-use swanky_channel_legacy::AbstractChannel;
+use crate::math::defines::FE;
 use std::io;
-
-pub type FE = crate::vole::field_config::FE;
+use swanky_channel_legacy::AbstractChannel;
 
 pub fn send_u8(channel: &mut impl AbstractChannel, data: &[u8]) -> io::Result<u64> {
     channel.write_bytes(&(data.len() as u64).to_le_bytes())?;
@@ -90,10 +89,7 @@ pub fn receive_bits(channel: &mut impl AbstractChannel) -> io::Result<Vec<bool>>
     Ok(bits)
 }
 
-pub fn send_fe(
-    channel: &mut impl AbstractChannel,
-    elements: &[FE],
-) -> io::Result<u64> {
+pub fn send_fe(channel: &mut impl AbstractChannel, elements: &[FE]) -> io::Result<u64> {
     let total_size = (elements.len() * 32) as u64;
     channel.write_bytes(&total_size.to_le_bytes())?;
     if !elements.is_empty() {

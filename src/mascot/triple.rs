@@ -5,11 +5,13 @@ use crate::{
         open_values_receive, open_values_send,
     },
     comm_util::{receive_fe, send_fe},
+    math::{
+        defines::{FE, FE_LIMBS},
+        scalar_field::{FOURQ_SCALAR_BITS, random_fourq_elements_from_prg},
+    },
     network::tcp_channel::SwankyChannel,
     pre_ot::OTPre,
-    scalar_field::{FOURQ_SCALAR_BITS, random_fourq_elements_from_prg},
-    vole::field_config::{FE, FE_LIMBS, fe_to_u128_limbs},
-    vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
+    vole::vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
 };
 use psi_aes::prg::PRG;
 
@@ -66,25 +68,21 @@ impl MascotTripleSender {
         let b_send = random_fe_vec(n);
 
         // COPE #1: sender has delta = b, receives chosen random FE values via OT.
-        let (delta_bits_1, selected_1) = init_sender_pre_ot_batch(
-            io,
-            &b_send,
-            m,
-            REPETITION,
-            &mut ot_when_receiver,
-            comm,
-        );
+        let (delta_bits_1, selected_1) =
+            init_sender_pre_ot_batch(io, &b_send, m, REPETITION, &mut ot_when_receiver, comm);
 
         // COPE #2: sender acts as OT sender and samples both random branches directly.
-        let (q0_2, q1_2) = init_receiver_random_ot_batch(
-            io,
-            total_ots,
-            &mut ot_when_sender,
-            comm,
-        );
+        let (q0_2, q1_2) = init_receiver_random_ot_batch(io, total_ots, &mut ot_when_sender, comm);
 
-        let (x1_sum_0, x1_sum_1) =
-            extend_sender_sum_batch(io, &selected_1, &delta_bits_1, n, m, TAU, &self.powers_of_two);
+        let (x1_sum_0, x1_sum_1) = extend_sender_sum_batch(
+            io,
+            &selected_1,
+            &delta_bits_1,
+            n,
+            m,
+            TAU,
+            &self.powers_of_two,
+        );
 
         let (y2_sum_0, y2_sum_1) = extend_receiver_sum_batch(
             io,
@@ -159,22 +157,11 @@ impl MascotTripleReceiver {
         let b_recv = random_fe_vec(n);
 
         // COPE #1: receiver side samples both random branches and sends through OT.
-        let (q0_1, q1_1) = init_receiver_random_ot_batch(
-            io,
-            total_ots,
-            &mut ot_when_sender,
-            comm,
-        );
+        let (q0_1, q1_1) = init_receiver_random_ot_batch(io, total_ots, &mut ot_when_sender, comm);
 
         // COPE #2: receiver has delta = b and receives chosen branch through OT.
-        let (delta_bits_2, selected_2) = init_sender_pre_ot_batch(
-            io,
-            &b_recv,
-            m,
-            REPETITION,
-            &mut ot_when_receiver,
-            comm,
-        );
+        let (delta_bits_2, selected_2) =
+            init_sender_pre_ot_batch(io, &b_recv, m, REPETITION, &mut ot_when_receiver, comm);
 
         let (y1_sum_0, y1_sum_1) = extend_receiver_sum_batch(
             io,
@@ -188,8 +175,15 @@ impl MascotTripleReceiver {
             comm,
         );
 
-        let (x2_sum_0, x2_sum_1) =
-            extend_sender_sum_batch(io, &selected_2, &delta_bits_2, n, m, TAU, &self.powers_of_two);
+        let (x2_sum_0, x2_sum_1) = extend_sender_sum_batch(
+            io,
+            &selected_2,
+            &delta_bits_2,
+            n,
+            m,
+            TAU,
+            &self.powers_of_two,
+        );
 
         let mut triple_0 = Vec::with_capacity(n);
         let mut triple_1 = Vec::with_capacity(n);
@@ -282,10 +276,11 @@ fn init_sender_pre_ot_batch(
 
     pre_ot.choices_recver_batch(io, &delta_bits, total_ots, comm);
 
-    let mut selected_msg = vec![[0u128; FE_LIMBS]; total_ots];
-    pre_ot.recv_with_offset(io, &mut selected_msg, &delta_bits, total_ots, 0, comm);
-
-    let selected = selected_msg.iter().map(u128_limbs_to_fe).collect::<Vec<_>>();
+    let selected = pre_ot
+        .receiver_random_ot_with_offset(total_ots, 0)
+        .iter()
+        .map(u128_limbs_to_fe_mod_order)
+        .collect::<Vec<_>>();
     (delta_bits, selected)
 }
 
@@ -295,20 +290,17 @@ fn init_receiver_random_ot_batch(
     pre_ot: &mut OTPre<FE_LIMBS>,
     comm: &mut u64,
 ) -> (Vec<FE>, Vec<FE>) {
-    let mut rot_prg = PRG::new(None, 0);
-    let mut q0 = vec![FE::zero(); total_ots];
-    let mut q1 = vec![FE::zero(); total_ots];
-
-    random_fourq_elements_from_prg(&mut rot_prg, &mut q0);
-    random_fourq_elements_from_prg(&mut rot_prg, &mut q1);
-
-    let k0_msg = q0.iter().map(|x| fe_to_u128_limbs(*x)).collect::<Vec<_>>();
-    let k1_msg = q1.iter().map(|x| fe_to_u128_limbs(*x)).collect::<Vec<_>>();
-
     pre_ot.choices_sender_batch(io, total_ots, comm);
-    pre_ot.send_with_offset(io, &k0_msg, &k1_msg, total_ots, 0, comm);
+    let (q0, q1) = pre_ot.sender_random_ot_with_offset(total_ots, 0);
 
-    (q0, q1)
+    (
+        q0.iter()
+            .map(u128_limbs_to_fe_mod_order)
+            .collect::<Vec<_>>(),
+        q1.iter()
+            .map(u128_limbs_to_fe_mod_order)
+            .collect::<Vec<_>>(),
+    )
 }
 
 fn extend_sender_sum_batch(
@@ -326,11 +318,7 @@ fn extend_sender_sum_batch(
     assert_eq!(powers.len(), m, "power length mismatch");
 
     let received_tau = receive_fe(io).expect("Failed to receive batched tau");
-    assert_eq!(
-        received_tau.len(),
-        total_ots,
-        "batched tau length mismatch"
-    );
+    assert_eq!(received_tau.len(), total_ots, "batched tau length mismatch");
 
     let mut sum_0 = vec![FE::zero(); n];
     let mut sum_1 = vec![FE::zero(); n];
@@ -565,11 +553,11 @@ fn open_and_add(io: &mut SwankyChannel, local: &[FE], comm: &mut u64) -> Vec<FE>
         .collect()
 }
 
-fn u128_limbs_to_fe(value: &[u128; FE_LIMBS]) -> FE {
+fn u128_limbs_to_fe_mod_order(value: &[u128; FE_LIMBS]) -> FE {
     let mut bytes = [0u8; 32];
     for (i, limb) in value.iter().enumerate() {
         let start = i * 16;
         bytes[start..start + 16].copy_from_slice(&limb.to_le_bytes());
     }
-    FE::from_bytes_le(&bytes).expect("OT payload must be canonical FE")
+    FE::from_bytes_le_mod_order(&bytes)
 }

@@ -1,20 +1,24 @@
 use crate::cope::Cope;
+use crate::{
+    comm_util::*,
+    math::{
+        defines::FE,
+        scalar_field::{FOURQ_SCALAR_BITS, random_fourq_elements_from_prg},
+    },
+    tcp_channel::SwankyChannel,
+};
 use psi_aes::prg::PRG;
-use crate::comm_util::*;
-use crate::tcp_channel::SwankyChannel;
-
-pub type FE = crate::vole::field_config::FE;
 
 pub struct BaseSvole {
-    party: u8,              // 0 for sender, 1 for receiver
-    cope: Cope,     // COPE instance
-    delta: Option<FE>,      // Delta for the sender
+    party: u8,         // 0 for sender, 1 for receiver
+    cope: Cope,        // COPE instance
+    delta: Option<FE>, // Delta for the sender
 }
 
 impl BaseSvole {
     /// Sender's constructor
     pub fn new_sender(io: &mut SwankyChannel, delta: FE, comm: &mut u64) -> Self {
-        let mut cope = Cope::new(0, crate::scalar_field::FOURQ_SCALAR_BITS);
+        let mut cope = Cope::new(0, FOURQ_SCALAR_BITS);
         cope.initialize_sender(io, delta.clone(), comm);
         Self {
             party: 0,
@@ -25,7 +29,7 @@ impl BaseSvole {
 
     /// Receiver's constructor
     pub fn new_receiver(io: &mut SwankyChannel, comm: &mut u64) -> Self {
-        let mut cope = Cope::new(1, crate::scalar_field::FOURQ_SCALAR_BITS);
+        let mut cope = Cope::new(1, FOURQ_SCALAR_BITS);
         cope.initialize_receiver(io, comm);
         Self {
             party: 1,
@@ -35,7 +39,13 @@ impl BaseSvole {
     }
 
     /// Sender: Triple generation
-    pub fn triple_gen_send(&mut self, io: &mut SwankyChannel, share: &mut [FE], size: usize, comm: &mut u64) {
+    pub fn triple_gen_send(
+        &mut self,
+        io: &mut SwankyChannel,
+        share: &mut [FE],
+        size: usize,
+        comm: &mut u64,
+    ) {
         // Generate share_recv = share_send + delta * u_recv
         self.cope.extend_sender_batch(io, share, size, comm);
         let mut b = vec![FE::zero(); 1];
@@ -44,13 +54,20 @@ impl BaseSvole {
     }
 
     /// Receiver: Triple generation
-    pub fn triple_gen_recv(&mut self, io: &mut SwankyChannel, share: &mut [FE], u: &mut [FE], size: usize, comm: &mut u64) {
+    pub fn triple_gen_recv(
+        &mut self,
+        io: &mut SwankyChannel,
+        share: &mut [FE],
+        u: &mut [FE],
+        size: usize,
+        comm: &mut u64,
+    ) {
         // Generate share_recv = share_send + delta * u_recv
         let mut prg = PRG::new(None, 0);
         let mut x = vec![FE::zero(); 1];
-        crate::scalar_field::random_fourq_elements_from_prg(&mut prg, &mut x);
+        random_fourq_elements_from_prg(&mut prg, &mut x);
 
-        crate::scalar_field::random_fourq_elements_from_prg(&mut prg, u);
+        random_fourq_elements_from_prg(&mut prg, u);
 
         self.cope.extend_receiver_batch(io, share, u, size, comm);
 
@@ -61,7 +78,14 @@ impl BaseSvole {
     }
 
     /// Sender: Consistency check
-    fn sender_check(&mut self, io: &mut SwankyChannel, share: &[FE], b: FE, size: usize, comm: &mut u64) {
+    fn sender_check(
+        &mut self,
+        io: &mut SwankyChannel,
+        share: &[FE],
+        b: FE,
+        size: usize,
+        comm: &mut u64,
+    ) {
         // Generate check seed and send it to Receiver
         let mut seed = vec![[0u8; 16]; 1];
         let mut seed_prg = PRG::new(None, 0);
@@ -83,7 +107,16 @@ impl BaseSvole {
     }
 
     /// Receiver: Consistency check
-    fn receiver_check(&mut self, io: &mut SwankyChannel, share: &[FE], x: &[FE], c: FE, a: FE, size: usize, comm: &mut u64) {
+    fn receiver_check(
+        &mut self,
+        io: &mut SwankyChannel,
+        share: &[FE],
+        x: &[FE],
+        c: FE,
+        a: FE,
+        size: usize,
+        comm: &mut u64,
+    ) {
         let seed = receive_block::<16>(io).expect("Cannot receive seed for check base sVOLE")[0];
 
         let chi = self.generate_hash_coeff(seed, size);
@@ -98,12 +131,14 @@ impl BaseSvole {
     fn generate_hash_coeff(&self, seed: [u8; 16], size: usize) -> Vec<FE> {
         let mut coeffs = vec![FE::zero(); size];
         let mut prg = PRG::new(Some(&seed), 0);
-        crate::scalar_field::random_fourq_elements_from_prg(&mut prg, &mut coeffs);
+        random_fourq_elements_from_prg(&mut prg, &mut coeffs);
         coeffs
     }
 
     /// Compute modular inner product
     fn vector_inner_product_mod(&self, vec1: &[FE], vec2: &[FE]) -> FE {
-        vec1.iter().zip(vec2).fold(FE::zero(), |acc, (v1, v2)| acc + (*v1 * *v2))
+        vec1.iter()
+            .zip(vec2)
+            .fold(FE::zero(), |acc, (v1, v2)| acc + (*v1 * *v2))
     }
 }

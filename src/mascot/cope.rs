@@ -1,8 +1,12 @@
-use crate::comm_util::{receive_fe, send_fe};
-use crate::network::tcp_channel::SwankyChannel;
-use crate::pre_ot::OTPre;
-use crate::scalar_field::{FOURQ_SCALAR_BITS, random_fourq_elements_from_prg};
-use crate::vole::field_config::FE;
+use crate::{
+    comm_util::{receive_fe, send_fe},
+    math::{
+        defines::FE,
+        scalar_field::{FOURQ_SCALAR_BITS, random_fourq_elements_from_prg},
+    },
+    network::tcp_channel::SwankyChannel,
+    pre_ot::OTPre,
+};
 use psi_aes::prg::PRG;
 
 const KEY_OT_LIMBS: usize = 1;
@@ -66,7 +70,8 @@ impl MascotCope {
         pre_ot.recv(io, &mut k_msg, &self.delta_bool, self.m, ot_round, comm);
 
         self.prg_g0 = Some(
-            k_msg.iter()
+            k_msg
+                .iter()
                 .map(|msg| PRG::new(Some(&msg[0].to_le_bytes()), 0))
                 .collect(),
         );
@@ -97,16 +102,8 @@ impl MascotCope {
         pre_ot.choices_sender(io, comm);
         pre_ot.send(io, &k0_msg, &k1_msg, self.m, ot_round, comm);
 
-        self.prg_g0 = Some(
-            k0.iter()
-                .map(|key| PRG::new(Some(key), 0))
-                .collect(),
-        );
-        self.prg_g1 = Some(
-            k1.iter()
-                .map(|key| PRG::new(Some(key), 0))
-                .collect(),
-        );
+        self.prg_g0 = Some(k0.iter().map(|key| PRG::new(Some(key), 0)).collect());
+        self.prg_g1 = Some(k1.iter().map(|key| PRG::new(Some(key), 0)).collect());
     }
 
     pub fn extend_sender_batch(

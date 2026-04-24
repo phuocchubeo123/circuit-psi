@@ -1,8 +1,13 @@
 use anyhow::{Context, Result, bail};
-use circuit_psi::comm_util::{receive_fe, receive_u8, send_fe, send_u8};
-use circuit_psi::cope::Cope;
-use circuit_psi::network::tcp_channel::{SwankyChannel, connect_with_retry, listen_to};
-use circuit_psi::scalar_field::{FOURQ_SCALAR_BITS, FourQScalarField as FE, random_fourq_elements_from_prg};
+use circuit_psi::{
+    comm_util::{receive_fe, receive_u8, send_fe, send_u8},
+    cope::Cope,
+    math::{
+        defines::FE,
+        scalar_field::{FOURQ_SCALAR_BITS, random_fourq_elements_from_prg},
+    },
+    network::tcp_channel::{SwankyChannel, connect_with_retry, listen_to},
+};
 use psi_aes::prg::PRG;
 use std::time::Instant;
 
@@ -32,12 +37,15 @@ fn random_fe_vec(n: usize) -> Vec<FE> {
 fn print_stats(role: &str, channel: &SwankyChannel, comm: u64) {
     println!("{role}: counted protocol bytes (comm): {comm}");
     println!("{role}: channel bytes sent: {}", channel.bytes_sent());
-    println!("{role}: channel bytes received: {}", channel.bytes_received());
+    println!(
+        "{role}: channel bytes received: {}",
+        channel.bytes_received()
+    );
 }
 
 fn run_sender(n: usize, addr: &str) -> Result<()> {
-    let mut channel = connect_with_retry(addr)
-        .with_context(|| format!("failed to connect to {addr}"))?;
+    let mut channel =
+        connect_with_retry(addr).with_context(|| format!("failed to connect to {addr}"))?;
     let mut comm = 0u64;
 
     let delta = random_fe_vec(1)[0];
@@ -78,7 +86,10 @@ fn run_sender(n: usize, addr: &str) -> Result<()> {
     println!("sender extend_sender_batch(n={n}) time: {:?}", extend_time);
     println!("sender has {n} values x_i");
     println!("receiver has {n} values y_i and {n} values u_i");
-    println!("relation y_i = x_i + delta * u_i: {}", if ok { "PASS" } else { "FAIL" });
+    println!(
+        "relation y_i = x_i + delta * u_i: {}",
+        if ok { "PASS" } else { "FAIL" }
+    );
 
     print_stats("sender", &channel, comm);
     Ok(())
@@ -107,10 +118,16 @@ fn run_receiver(n: usize, addr: &str) -> Result<()> {
     let ok = status.first().copied() == Some(1u8);
 
     println!("receiver init (create + setup) time: {:?}", init_time);
-    println!("receiver extend_receiver_batch(n={n}) time: {:?}", extend_time);
+    println!(
+        "receiver extend_receiver_batch(n={n}) time: {:?}",
+        extend_time
+    );
     println!("sender has {n} values x_i");
     println!("receiver has {n} values y_i and {n} values u_i");
-    println!("relation y_i = x_i + delta * u_i: {}", if ok { "PASS" } else { "FAIL" });
+    println!(
+        "relation y_i = x_i + delta * u_i: {}",
+        if ok { "PASS" } else { "FAIL" }
+    );
 
     print_stats("receiver", &channel, comm);
     Ok(())

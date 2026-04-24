@@ -1,7 +1,7 @@
+pub mod bedoza_multiply;
 pub mod bedoza_receiver;
 pub mod bedoza_sender;
 pub mod comm_util;
-pub mod defines;
 pub mod wolverine;
 
 use crate::{
@@ -9,8 +9,8 @@ use crate::{
         bedoza_receiver::{BeDOZaReceiver, receive_open_shares},
         bedoza_sender::{BeDOZaSender, send_open_shares},
         comm_util::{receive_fe_vec, send_fe_vec},
-        defines::FE,
     },
+    math::defines::FE,
     tcp_channel::SwankyChannel,
 };
 use anyhow::{Result, anyhow, ensure};
@@ -145,7 +145,10 @@ pub fn open_values_send(bedoza_shares: &[BeDOZa], channel: &mut SwankyChannel) -
     Ok(())
 }
 
-pub fn open_values_receive(bedoza_shares: &[BeDOZa], channel: &mut SwankyChannel) -> Result<Vec<FE>> {
+pub fn open_values_receive(
+    bedoza_shares: &[BeDOZa],
+    channel: &mut SwankyChannel,
+) -> Result<Vec<FE>> {
     let bedoza_receivers: Vec<BeDOZaReceiver> = bedoza_shares
         .iter()
         .map(|share| *share.bedoza_receiver())
@@ -160,313 +163,6 @@ pub fn open_values_receive(bedoza_shares: &[BeDOZa], channel: &mut SwankyChannel
         .collect();
 
     Ok(reconstructed_values)
-}
-
-pub fn batch_multiply(
-    x_shares: &[BeDOZa],
-    y_shares: &[BeDOZa],
-    triple_shares: &[BeDOZaTriple],
-    channel: &mut SwankyChannel,
-) -> Result<Vec<BeDOZa>> {
-    ensure!(
-        x_shares.len() == y_shares.len(),
-        "Length mismatch between x_shares and y_shares: lhs = {}, rhs = {}",
-        x_shares.len(),
-        y_shares.len()
-    );
-    ensure!(
-        x_shares.len() == triple_shares.len(),
-        "Length mismatch between x_shares and triple_shares: lhs = {}, rhs = {}",
-        x_shares.len(),
-        triple_shares.len()
-    );
-
-    // First compute d = x - a and e = y - b
-    let d_shares: Vec<BeDOZa> = x_shares
-        .iter()
-        .zip(triple_shares.iter())
-        .map(|(x_share, triple_share)| {
-            let (a_share, _, _) = triple_share;
-            x_share - a_share
-        })
-        .collect();
-
-    let e_shares: Vec<BeDOZa> = y_shares
-        .iter()
-        .zip(triple_shares.iter())
-        .map(|(y_share, triple_share)| {
-            let (_, b_share, _) = triple_share;
-            y_share - b_share
-        })
-        .collect();
-
-    // Now open d and e to both parties
-    let d_receivers: Vec<BeDOZaReceiver> = d_shares
-        .iter()
-        .map(|share| *share.bedoza_receiver())
-        .collect();
-    let d_receiver_values = receive_open_shares(&d_receivers, channel)
-        .map_err(|e| anyhow!("Failed to receive open d shares: {}", e))?;
-    let d_values: Vec<FE> = d_shares
-        .iter()
-        .zip(d_receiver_values.iter())
-        .map(|(share, &receiver_value)| share.bedoza_sender().val() + receiver_value)
-        .collect();
-
-    let e_receivers: Vec<BeDOZaReceiver> = e_shares
-        .iter()
-        .map(|share| *share.bedoza_receiver())
-        .collect();
-    let e_receiver_values = receive_open_shares(&e_receivers, channel)
-        .map_err(|e| anyhow!("Failed to receive open e shares: {}", e))?;
-    let e_values: Vec<FE> = e_shares
-        .iter()
-        .zip(e_receiver_values.iter())
-        .map(|(share, &receiver_value)| share.bedoza_sender().val() + receiver_value)
-        .collect();
-
-    // Compute db and ea locally
-    let db_shares: Vec<BeDOZa> = d_values
-        .iter()
-        .zip(triple_shares.iter())
-        .map(|(&d, triple_share)| {
-            let (_, b_share, _) = triple_share;
-            b_share * d
-        })
-        .collect();
-
-    let ea_shares: Vec<BeDOZa> = e_values
-        .iter()
-        .zip(triple_shares.iter())
-        .map(|(&e, triple_share)| {
-            let (a_share, _, _) = triple_share;
-            a_share * e
-        })
-        .collect();
-
-    let de_values: Vec<FE> = d_values
-        .iter()
-        .zip(e_values.iter())
-        .map(|(&d, &e)| d * e)
-        .collect();
-
-    // Compute the final result: c = ab + db + ea + de
-    let xy_shares: Vec<BeDOZa> = triple_shares
-        .iter()
-        .zip(db_shares.iter())
-        .zip(ea_shares.iter())
-        .zip(de_values.iter())
-        .map(|((((_, _, c_share), db_share), ea_share), &de)| c_share + db_share + ea_share + de)
-        .collect();
-
-    Ok(xy_shares)
-}
-
-fn multiplication_opening_shares(
-    x_shares: &[BeDOZa],
-    y_shares: &[BeDOZa],
-    triple_shares: &[BeDOZaTriple],
-) -> Result<(Vec<BeDOZa>, Vec<BeDOZa>)> {
-    ensure!(
-        x_shares.len() == y_shares.len(),
-        "Length mismatch between x_shares and y_shares: lhs = {}, rhs = {}",
-        x_shares.len(),
-        y_shares.len()
-    );
-    ensure!(
-        x_shares.len() == triple_shares.len(),
-        "Length mismatch between x_shares and triple_shares: lhs = {}, rhs = {}",
-        x_shares.len(),
-        triple_shares.len()
-    );
-
-    let d_shares: Vec<BeDOZa> = x_shares
-        .iter()
-        .zip(triple_shares.iter())
-        .map(|(x_share, triple_share)| {
-            let (a_share, _, _) = triple_share;
-            x_share - a_share
-        })
-        .collect();
-
-    let e_shares: Vec<BeDOZa> = y_shares
-        .iter()
-        .zip(triple_shares.iter())
-        .map(|(y_share, triple_share)| {
-            let (_, b_share, _) = triple_share;
-            y_share - b_share
-        })
-        .collect();
-
-    Ok((d_shares, e_shares))
-}
-
-pub fn send_batch_multiply_openings(
-    x_shares: &[BeDOZa],
-    y_shares: &[BeDOZa],
-    triple_shares: &[BeDOZaTriple],
-    channel: &mut SwankyChannel,
-) -> Result<()> {
-    let (d_shares, e_shares) = multiplication_opening_shares(x_shares, y_shares, triple_shares)?;
-    open_values_send(&d_shares, channel)
-        .map_err(|e| anyhow!("Failed to send d-share openings: {}", e))?;
-    open_values_send(&e_shares, channel)
-        .map_err(|e| anyhow!("Failed to send e-share openings: {}", e))?;
-    Ok(())
-}
-
-pub fn batch_multiply_interactive(
-    x_shares: &[BeDOZa],
-    y_shares: &[BeDOZa],
-    triple_shares: &[BeDOZaTriple],
-    channel: &mut SwankyChannel,
-) -> Result<Vec<BeDOZa>> {
-    send_batch_multiply_openings(x_shares, y_shares, triple_shares, channel)?;
-    batch_multiply(x_shares, y_shares, triple_shares, channel)
-}
-
-pub fn take_vec_prod(
-    shares: &[BeDOZa],
-    triple_shares: &[BeDOZaTriple],
-    channel: &mut SwankyChannel,
-) -> Result<BeDOZa> {
-    ensure!(
-        !shares.is_empty(),
-        "Cannot take product of an empty vector of shares"
-    );
-
-    let mut current_len = shares.len();
-    let mut triples_used = 0;
-    let mut new_shares = shares.to_vec();
-    let mut current_number_of_shares = 0;
-
-    loop {
-        if current_len == 1 {
-            break;
-        }
-        let half_len = current_len / 2;
-        let (left, right) = new_shares
-            [current_number_of_shares..current_number_of_shares + current_len]
-            .split_at(half_len);
-        current_number_of_shares += current_len;
-
-        ensure!(
-            triples_used + half_len <= triple_shares.len(),
-            "Not enough triple shares to take product: need at least {}, got {}",
-            triples_used + half_len,
-            triple_shares.len()
-        );
-
-        if right.len() > left.len() {
-            let last_share_right = *right.last().unwrap();
-            let multiplied_shares = batch_multiply(
-                left,
-                &right[..half_len],
-                &triple_shares[triples_used..triples_used + half_len],
-                channel,
-            )
-            .map_err(|e| {
-                anyhow!(
-                    "Failed to batch multiply shares while taking vector product: {}",
-                    e
-                )
-            })?;
-            new_shares.extend(multiplied_shares);
-            new_shares.push(last_share_right);
-            current_len = half_len + 1;
-        } else {
-            let multiplied_shares = batch_multiply(
-                left,
-                right,
-                &triple_shares[triples_used..triples_used + half_len],
-                channel,
-            )
-            .map_err(|e| {
-                anyhow!(
-                    "Failed to batch multiply shares while taking vector product: {}",
-                    e
-                )
-            })?;
-            new_shares.extend(multiplied_shares);
-            current_len = half_len;
-        }
-
-        triples_used += half_len;
-    }
-
-    Ok(*new_shares.last().unwrap())
-}
-
-pub fn take_vec_prod_interactive(
-    shares: &[BeDOZa],
-    triple_shares: &[BeDOZaTriple],
-    channel: &mut SwankyChannel,
-) -> Result<BeDOZa> {
-    ensure!(
-        !shares.is_empty(),
-        "Cannot take product of an empty vector of shares"
-    );
-
-    let mut current_len = shares.len();
-    let mut triples_used = 0;
-    let mut new_shares = shares.to_vec();
-    let mut current_number_of_shares = 0;
-
-    loop {
-        if current_len == 1 {
-            break;
-        }
-        let half_len = current_len / 2;
-        let (left, right) = new_shares
-            [current_number_of_shares..current_number_of_shares + current_len]
-            .split_at(half_len);
-        current_number_of_shares += current_len;
-
-        ensure!(
-            triples_used + half_len <= triple_shares.len(),
-            "Not enough triple shares to take product: need at least {}, got {}",
-            triples_used + half_len,
-            triple_shares.len()
-        );
-
-        if right.len() > left.len() {
-            let last_share_right = *right.last().unwrap();
-            let multiplied_shares = batch_multiply_interactive(
-                left,
-                &right[..half_len],
-                &triple_shares[triples_used..triples_used + half_len],
-                channel,
-            )
-            .map_err(|e| {
-                anyhow!(
-                    "Failed to batch multiply shares while taking vector product: {}",
-                    e
-                )
-            })?;
-            new_shares.extend(multiplied_shares);
-            new_shares.push(last_share_right);
-            current_len = half_len + 1;
-        } else {
-            let multiplied_shares = batch_multiply_interactive(
-                left,
-                right,
-                &triple_shares[triples_used..triples_used + half_len],
-                channel,
-            )
-            .map_err(|e| {
-                anyhow!(
-                    "Failed to batch multiply shares while taking vector product: {}",
-                    e
-                )
-            })?;
-            new_shares.extend(multiplied_shares);
-            current_len = half_len;
-        }
-
-        triples_used += half_len;
-    }
-
-    Ok(*new_shares.last().unwrap())
 }
 
 impl Add<&BeDOZa> for &BeDOZa {

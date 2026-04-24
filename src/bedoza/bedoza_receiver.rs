@@ -1,7 +1,4 @@
-use crate::{
-    bedoza::{comm_util::receive_fe_vec, defines::FE},
-    tcp_channel::SwankyChannel,
-};
+use crate::{bedoza::comm_util::receive_fe_vec, math::defines::FE, tcp_channel::SwankyChannel};
 use anyhow::{Result, anyhow, ensure};
 
 use std::ops::{Add, Mul, Sub};

@@ -80,12 +80,7 @@ impl<const NUM_LIMBS: usize> OTPre<NUM_LIMBS> {
         self.choices_recver_batch(io, choices, self.length, comm);
     }
 
-    pub fn choices_sender_batch(
-        &mut self,
-        io: &mut SwankyChannel,
-        length: usize,
-        _comm: &mut u64,
-    ) {
+    pub fn choices_sender_batch(&mut self, io: &mut SwankyChannel, length: usize, _comm: &mut u64) {
         let received_bits = receive_bits(io).expect("Failed to receive bits");
         assert_eq!(received_bits.len(), length, "invalid OT choice length");
         assert!(
@@ -193,7 +188,10 @@ impl<const NUM_LIMBS: usize> OTPre<NUM_LIMBS> {
         offset: usize,
         _comm: &mut u64,
     ) {
-        assert!(data.len() >= length, "insufficient OT receiver output length");
+        assert!(
+            data.len() >= length,
+            "insufficient OT receiver output length"
+        );
         assert!(b.len() >= length, "insufficient OT receiver choice length");
         assert!(
             offset + length <= self.n,
@@ -211,6 +209,46 @@ impl<const NUM_LIMBS: usize> OTPre<NUM_LIMBS> {
         }
     }
 
+    pub fn sender_random_ot_with_offset(
+        &self,
+        length: usize,
+        offset: usize,
+    ) -> (Vec<[u128; NUM_LIMBS]>, Vec<[u128; NUM_LIMBS]>) {
+        assert!(
+            offset + length <= self.n,
+            "OT sender random OT out of precomputed range"
+        );
+
+        let mut m0 = vec![[0u128; NUM_LIMBS]; length];
+        let mut m1 = vec![[0u128; NUM_LIMBS]; length];
+
+        for i in 0..length {
+            let idx = offset + i;
+            if !self.bits[idx] {
+                m0[i] = self.pre_data[idx];
+                m1[i] = self.pre_data[idx + self.n];
+            } else {
+                m0[i] = self.pre_data[idx + self.n];
+                m1[i] = self.pre_data[idx];
+            }
+        }
+
+        (m0, m1)
+    }
+
+    pub fn receiver_random_ot_with_offset(
+        &self,
+        length: usize,
+        offset: usize,
+    ) -> Vec<[u128; NUM_LIMBS]> {
+        assert!(
+            offset + length <= self.n,
+            "OT receiver random OT out of precomputed range"
+        );
+
+        self.pre_data[offset..offset + length].to_vec()
+    }
+
     pub fn reset(&mut self) {
         self.count = 0;
     }
@@ -218,13 +256,29 @@ impl<const NUM_LIMBS: usize> OTPre<NUM_LIMBS> {
 
 fn xor_block(a: &[u8; 16], b: &[u8; 16]) -> [u8; 16] {
     [
-        a[0] ^ b[0], a[1] ^ b[1], a[2] ^ b[2], a[3] ^ b[3], a[4] ^ b[4], a[5] ^ b[5],
-        a[6] ^ b[6], a[7] ^ b[7], a[8] ^ b[8], a[9] ^ b[9], a[10] ^ b[10], a[11] ^ b[11],
-        a[12] ^ b[12], a[13] ^ b[13], a[14] ^ b[14], a[15] ^ b[15],
+        a[0] ^ b[0],
+        a[1] ^ b[1],
+        a[2] ^ b[2],
+        a[3] ^ b[3],
+        a[4] ^ b[4],
+        a[5] ^ b[5],
+        a[6] ^ b[6],
+        a[7] ^ b[7],
+        a[8] ^ b[8],
+        a[9] ^ b[9],
+        a[10] ^ b[10],
+        a[11] ^ b[11],
+        a[12] ^ b[12],
+        a[13] ^ b[13],
+        a[14] ^ b[14],
+        a[15] ^ b[15],
     ]
 }
 
-fn xor_message<const NUM_LIMBS: usize>(a: &[u128; NUM_LIMBS], b: &[u128; NUM_LIMBS]) -> [u128; NUM_LIMBS] {
+fn xor_message<const NUM_LIMBS: usize>(
+    a: &[u128; NUM_LIMBS],
+    b: &[u128; NUM_LIMBS],
+) -> [u128; NUM_LIMBS] {
     let mut res = [0u128; NUM_LIMBS];
     for i in 0..NUM_LIMBS {
         res[i] = a[i] ^ b[i];

@@ -3,11 +3,10 @@ use std::{net::TcpListener, thread};
 use anyhow::Result;
 use circuit_psi::{
     bedoza::{
-        BeDOZa, BeDOZaTriple, batch_multiply,
-        bedoza_receiver::BeDOZaReceiver,
-        bedoza_sender::{BeDOZaSender, send_open_shares},
-        defines::FE,
+        BeDOZa, BeDOZaTriple, bedoza_multiply::batch_multiply, bedoza_receiver::BeDOZaReceiver,
+        bedoza_sender::BeDOZaSender,
     },
+    math::defines::FE,
     tcp_channel::{SwankyChannel, connect_with_retry, listen_to},
 };
 
@@ -118,63 +117,41 @@ fn build_inputs(
     (p0_x, p0_y, p0_t, p1_x, p1_y, p1_t, expected_products)
 }
 
-fn send_openings_for_peer(
-    x_shares: &[BeDOZa],
-    y_shares: &[BeDOZa],
-    triples: &[BeDOZaTriple],
-    channel: &mut SwankyChannel,
-) -> Result<()> {
-    let d_shares: Vec<BeDOZa> = x_shares
-        .iter()
-        .zip(triples.iter())
-        .map(|(x_share, triple)| {
-            let (a_share, _, _) = triple;
-            x_share - a_share
-        })
-        .collect();
-    let d_senders: Vec<BeDOZaSender> = d_shares
-        .iter()
-        .map(|share| *share.bedoza_sender())
-        .collect();
-    send_open_shares(&d_senders, channel)?;
-
-    let e_shares: Vec<BeDOZa> = y_shares
-        .iter()
-        .zip(triples.iter())
-        .map(|(y_share, triple)| {
-            let (_, b_share, _) = triple;
-            y_share - b_share
-        })
-        .collect();
-    let e_senders: Vec<BeDOZaSender> = e_shares
-        .iter()
-        .map(|share| *share.bedoza_sender())
-        .collect();
-    send_open_shares(&e_senders, channel)?;
-
-    Ok(())
-}
-
-fn run_batch_with_peer_sender(
+fn run_batch_party(
+    listen: bool,
+    addr: String,
     local_x: Vec<BeDOZa>,
     local_y: Vec<BeDOZa>,
     local_t: Vec<BeDOZaTriple>,
-    peer_x: Vec<BeDOZa>,
-    peer_y: Vec<BeDOZa>,
-    peer_t: Vec<BeDOZaTriple>,
+    side: bool,
 ) -> Result<Vec<BeDOZa>> {
+    let mut channel = if listen {
+        listen_to(&addr)?
+    } else {
+        connect_with_retry(&addr)?
+    };
+
+    batch_multiply(&local_x, &local_y, &local_t, side, &mut channel)
+}
+
+fn run_batch_concurrently(
+    p0_x: Vec<BeDOZa>,
+    p0_y: Vec<BeDOZa>,
+    p0_t: Vec<BeDOZaTriple>,
+    p1_x: Vec<BeDOZa>,
+    p1_y: Vec<BeDOZa>,
+    p1_t: Vec<BeDOZaTriple>,
+) -> Result<(Vec<BeDOZa>, Vec<BeDOZa>)> {
     let addr = free_local_addr();
     let server_addr = addr.clone();
-    let sender_thread = thread::spawn(move || -> Result<()> {
-        let mut channel = listen_to(&server_addr)?;
-        send_openings_for_peer(&peer_x, &peer_y, &peer_t, &mut channel)
+    let server_thread = thread::spawn(move || -> Result<Vec<BeDOZa>> {
+        run_batch_party(true, server_addr, p0_x, p0_y, p0_t, false)
     });
 
-    let mut client_channel = connect_with_retry(&addr)?;
-    let result = batch_multiply(&local_x, &local_y, &local_t, &mut client_channel)?;
+    let client_result = run_batch_party(false, addr, p1_x, p1_y, p1_t, true)?;
+    let server_result = server_thread.join().expect("server thread panicked")?;
 
-    sender_thread.join().expect("peer sender thread panicked")?;
-    Ok(result)
+    Ok((server_result, client_result))
 }
 
 fn assert_cross_authenticated(local: &BeDOZa, remote: &BeDOZa) {
@@ -188,13 +165,8 @@ fn batch_multiply_localhost_roundtrip() -> Result<()> {
     let key0 = fe(97);
     let key1 = fe(113);
 
-    let (p0_x_a, p0_y_a, p0_t_a, p1_x_a, p1_y_a, p1_t_a, expected_products) =
-        build_inputs(key0, key1);
-    let z0 = run_batch_with_peer_sender(p0_x_a, p0_y_a, p0_t_a, p1_x_a, p1_y_a, p1_t_a)?;
-
-    // Rebuild the same deterministic inputs to run the opposite direction.
-    let (p0_x_b, p0_y_b, p0_t_b, p1_x_b, p1_y_b, p1_t_b, _) = build_inputs(key0, key1);
-    let z1 = run_batch_with_peer_sender(p1_x_b, p1_y_b, p1_t_b, p0_x_b, p0_y_b, p0_t_b)?;
+    let (p0_x, p0_y, p0_t, p1_x, p1_y, p1_t, expected_products) = build_inputs(key0, key1);
+    let (z0, z1) = run_batch_concurrently(p0_x, p0_y, p0_t, p1_x, p1_y, p1_t)?;
 
     assert_eq!(z0.len(), expected_products.len());
     assert_eq!(z1.len(), expected_products.len());

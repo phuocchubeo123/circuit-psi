@@ -3,24 +3,18 @@ use circuit_psi::{
     bedoza::{
         bedoza_receiver::BeDOZaReceiver,
         bedoza_sender::BeDOZaSender,
-        defines::FE,
         wolverine::{wolverine_batch_mul_prove, wolverine_batch_mul_verify},
     },
-    scalar_field::fq,
+    math::{defines::FE, scalar_field::fq},
     tcp_channel::{connect_with_retry, listen_to},
-    vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
-    vole_triple::LPN21,
+    vole::{
+        vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
+        vole_triple::LPN21,
+    },
 };
-use std::{
-    net::TcpListener,
-    thread,
-};
+use std::{net::TcpListener, thread};
 
-type SenderBatch = (
-    Vec<BeDOZaSender>,
-    Vec<BeDOZaSender>,
-    Vec<BeDOZaSender>,
-);
+type SenderBatch = (Vec<BeDOZaSender>, Vec<BeDOZaSender>, Vec<BeDOZaSender>);
 type ReceiverBatch = (
     Vec<BeDOZaReceiver>,
     Vec<BeDOZaReceiver>,
@@ -64,8 +58,7 @@ fn make_batch(delta_1: FE, gates: usize, tamper_one_gate: bool) -> (SenderBatch,
 }
 
 fn run_round(delta_1: FE, gates: usize, tamper_one_gate: bool, expect_ok: bool) -> Result<()> {
-    let ((a_s, b_s, c_s), (a_r, b_r, c_r)) =
-        make_batch(delta_1, gates, tamper_one_gate);
+    let ((a_s, b_s, c_s), (a_r, b_r, c_r)) = make_batch(delta_1, gates, tamper_one_gate);
 
     let listener = TcpListener::bind("127.0.0.1:0").context("bind localhost listener")?;
     let addr_str = listener

@@ -1,11 +1,12 @@
 use anyhow::{Context, Result, anyhow, ensure};
 use circuit_psi::{
-    bedoza::defines::random_fe_vec_from_rng,
-    scalar_field::fq,
-    shuffle_inputer::Inputer,
+    math::{defines::random_fe_vec_from_rng, scalar_field::fq},
+    shuffled_oprf::shuffle_inputer::Inputer,
     tcp_channel::connect_with_retry,
-    vole_triple::LPN21,
-    vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
+    vole::{
+        vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
+        vole_triple::LPN21,
+    },
 };
 use std::time::Instant;
 
@@ -33,6 +34,7 @@ fn main() -> Result<()> {
     let total_start = Instant::now();
 
     let delta_0 = fq(97);
+    let inputer_vole_key = fq(173);
 
     let mut channel = timed("connect_swanky", || {
         connect_with_retry(SWANKY_ADDR).context("connect swanky channel")
@@ -46,21 +48,22 @@ fn main() -> Result<()> {
         BufferedVoleReceiver::init(&mut channel, -delta_0, LPN21)
             .map_err(|e| anyhow!("init auth receiver VOLE failed: {}", e))
     })?;
-    let inputer = Inputer::new(delta_0);
+    let inputer = Inputer::new(delta_0, inputer_vole_key);
     let mut rng = rand::rng();
 
     let x_values = timed("generate_inputs", || {
         random_fe_vec_from_rng(&mut rng, n).context("generate input set")
     })?;
 
-    let (key_shares, authenticated_xi, authenticated_ri, authenticated_pi) = timed("step0", || {
-        inputer.step0_authenticate_oprf_key_and_xi_and_ri_and_receive_pi(
-            &x_values,
-            &mut auth_vole_sender,
-            &mut auth_vole_receiver,
-            &mut channel,
-        )
-    })?;
+    let (key_shares, authenticated_xi, authenticated_ri, authenticated_pi) =
+        timed("step0", || {
+            inputer.step0_authenticate_oprf_key_and_xi_and_ri_and_receive_pi(
+                &x_values,
+                &mut auth_vole_sender,
+                &mut auth_vole_receiver,
+                &mut channel,
+            )
+        })?;
 
     let mut k1_mul_vole_sender = timed("init_k1_mul_vole_sender", || {
         BufferedVoleSender::init(&mut channel, LPN21)

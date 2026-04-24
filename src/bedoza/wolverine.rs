@@ -3,10 +3,10 @@ use crate::{
         bedoza_receiver::BeDOZaReceiver,
         bedoza_sender::BeDOZaSender,
         comm_util::{receive_fe, send_fe},
-        defines::{FE, random_fe_vec_from_rng},
     },
+    math::defines::{FE, random_fe_vec_from_rng},
     tcp_channel::SwankyChannel,
-    vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
+    vole::vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
 };
 use anyhow::{Result, anyhow, ensure};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
@@ -90,8 +90,7 @@ pub fn wolverine_batch_mul_prove(
 
     send_fe(lambda_batch, channel)
         .map_err(|e| anyhow!("failed to send Wolverine lambda batch: {}", e))?;
-    send_fe(mu_batch, channel)
-        .map_err(|e| anyhow!("failed to send Wolverine mu batch: {}", e))?;
+    send_fe(mu_batch, channel).map_err(|e| anyhow!("failed to send Wolverine mu batch: {}", e))?;
 
     Ok(())
 }
@@ -140,8 +139,8 @@ pub fn wolverine_batch_mul_verify(
 
     let lambda_batch = receive_fe(channel)
         .map_err(|e| anyhow!("failed to receive Wolverine lambda batch: {}", e))?;
-    let mu_batch = receive_fe(channel)
-        .map_err(|e| anyhow!("failed to receive Wolverine mu batch: {}", e))?;
+    let mu_batch =
+        receive_fe(channel).map_err(|e| anyhow!("failed to receive Wolverine mu batch: {}", e))?;
 
     let l_batch_mul = mul_coeffs
         .iter()
@@ -253,8 +252,12 @@ pub fn wolverine_batch_mul_public_output_verify(
     let (mul_coeffs, dummy_coeffs) = coeffs.split_at(a.len());
     let dummy_coeff = dummy_coeffs[0];
 
-    let lambda_batch = receive_fe(channel)
-        .map_err(|e| anyhow!("failed to receive Wolverine public-output lambda batch: {}", e))?;
+    let lambda_batch = receive_fe(channel).map_err(|e| {
+        anyhow!(
+            "failed to receive Wolverine public-output lambda batch: {}",
+            e
+        )
+    })?;
     let mu_batch = receive_fe(channel)
         .map_err(|e| anyhow!("failed to receive Wolverine public-output mu batch: {}", e))?;
 

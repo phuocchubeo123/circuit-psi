@@ -1,6 +1,6 @@
 use anyhow::Result;
-use circuit_psi::{
-    bedoza::defines::{FE, random_fe_vec},
+use circuit_psi::math::{
+    defines::{FE, random_fe_vec},
     group::{Group, msm_pippenger, msm_pippenger_with_window},
 };
 use std::env;

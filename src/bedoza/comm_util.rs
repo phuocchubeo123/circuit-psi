@@ -1,4 +1,4 @@
-use crate::{bedoza::defines::FE, tcp_channel::SwankyChannel};
+use crate::{math::defines::FE, tcp_channel::SwankyChannel};
 use anyhow::{Result, anyhow};
 use rand::RngExt;
 use sha2::{Digest, Sha256};

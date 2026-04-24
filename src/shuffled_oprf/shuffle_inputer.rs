@@ -1,16 +1,20 @@
 use crate::{
     bedoza::{
-        BeDOZa, 
-        bedoza_receiver::{BeDOZaReceiver, linear_comb_receiver, receive_open_shares}, 
-        bedoza_sender::{BeDOZaSender, linear_comb_sender, send_open_shares}, 
-        comm_util::{random_32bytes_coin, send_fe_vec}, 
-        defines::{FE, powers, random_fe_vec_from_rng}, wolverine::{
+        BeDOZa,
+        bedoza_receiver::{BeDOZaReceiver, linear_comb_receiver, receive_open_shares},
+        bedoza_sender::{BeDOZaSender, linear_comb_sender, send_open_shares},
+        comm_util::{random_32bytes_coin, send_fe_vec},
+        wolverine::{
             wolverine_batch_mul_prove, wolverine_batch_mul_public_output_verify,
             wolverine_batch_mul_verify,
-        }
-    }, group::{Group, msm_pippenger, receive_group_elements, send_group_elements}, 
-    tcp_channel::SwankyChannel, 
-    vole_buffer::{BufferedVoleReceiver, BufferedVoleSender}
+        },
+    },
+    math::{
+        defines::{FE, powers, random_fe_vec_from_rng},
+        group::{Group, msm_pippenger, receive_group_elements, send_group_elements},
+    },
+    tcp_channel::SwankyChannel,
+    vole::vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
 };
 use anyhow::{Result, anyhow, ensure};
 use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -21,16 +25,21 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Inputer {
-    delta_0: FE,
+    delta0: FE,
+    k0: FE,
 }
 
 impl Inputer {
-    pub fn new(delta_0: FE) -> Self {
-        Self { delta_0 }
+    pub fn new(delta0: FE, k0: FE) -> Self {
+        Self { delta0, k0 }
     }
 
     pub fn delta_0(&self) -> FE {
-        self.delta_0
+        self.delta0
+    }
+
+    pub fn vole_key(&self) -> FE {
+        self.k0
     }
 
     pub fn step0_authenticate_oprf_key_and_xi_and_ri_and_receive_pi(
@@ -39,21 +48,34 @@ impl Inputer {
         vole_sender: &mut BufferedVoleSender,
         vole_receiver: &mut BufferedVoleReceiver,
         channel: &mut SwankyChannel,
-    ) -> Result<(BeDOZa, Vec<BeDOZaSender>, Vec<BeDOZaSender>, Vec<BeDOZaReceiver>)> {
-        // Inputer receives both authenticated key shares from paired random_auth calls:
-        // its own k0 as sender material and shuffler's k1 as receiver material.
-        let inputer_k0_sender = vole_sender.random_auth(channel, 1).map_err(|e| anyhow!("Failed to authenticate k0: {e}"))?[0];
-        let shuffler_k1_receiver = vole_receiver.random_auth(channel, 1).map_err(|e| anyhow!("Failed to receive authenticated k1: {e}"))?[0];
+    ) -> Result<(
+        BeDOZa,
+        Vec<BeDOZaSender>,
+        Vec<BeDOZaSender>,
+        Vec<BeDOZaReceiver>,
+    )> {
+        // Inputer authenticates its caller-supplied VOLE key k0 and receives the shuffler's
+        // authenticated VOLE key k1 from the peer.
+        let inputer_k0_sender = vole_sender
+            .commit_auth(channel, &[self.k0])
+            .map_err(|e| anyhow!("Failed to authenticate k0: {e}"))?[0];
+        let shuffler_k1_receiver = vole_receiver
+            .commit_auth(channel, 1)
+            .map_err(|e| anyhow!("Failed to receive authenticated k1: {e}"))?[0];
 
         // Inputer commits its local input values with VOLE under the shuffler's key delta_1.
-        let authenticated_xis = vole_sender.commit_auth(channel, vals).map_err(|e| anyhow!("Failed to authenticate input values: {e}"))?;
+        let authenticated_xis = vole_sender
+            .commit_auth(channel, vals)
+            .map_err(|e| anyhow!("Failed to authenticate input values: {e}"))?;
 
         // Inputer gets authenticated random values without additional network traffic.
-        let authenticated_ris = vole_sender.random_auth(channel, vals.len())
+        let authenticated_ris = vole_sender
+            .random_auth(channel, vals.len())
             .map_err(|e| anyhow!("Failed to authenticate random values: {e}"))?;
 
         // Inputs receives authenticated permutation pi
-        let authenticated_pi = vole_receiver.commit_auth(channel, vals.len())
+        let authenticated_pi = vole_receiver
+            .commit_auth(channel, vals.len())
             .map_err(|e| anyhow!("Failed to authenticate the permutation: {e}"))?;
 
         Ok((
@@ -79,8 +101,10 @@ impl Inputer {
             authenticated_ris.len()
         );
 
-        let authenticated_x_plus_k0: Vec<BeDOZaSender> =
-            authenticated_xis.iter().map(|x| x + authenticated_k0).collect();
+        let authenticated_x_plus_k0: Vec<BeDOZaSender> = authenticated_xis
+            .iter()
+            .map(|x| x + authenticated_k0)
+            .collect();
 
         let r_times_x_plus_k0_values: Vec<FE> = authenticated_ris
             .iter()
@@ -88,7 +112,8 @@ impl Inputer {
             .map(|(&r_i, x_plus_k0_i)| r_i.val() * x_plus_k0_i.val())
             .collect();
 
-        let authenticated_r_times_x_plus_k0 = vole_sender.commit_auth(channel, &r_times_x_plus_k0_values)
+        let authenticated_r_times_x_plus_k0 = vole_sender
+            .commit_auth(channel, &r_times_x_plus_k0_values)
             .map_err(|e| anyhow!("Failed to authenticate ri*(xi + k0): {e}"))?;
 
         wolverine_batch_mul_prove(
@@ -114,28 +139,35 @@ impl Inputer {
         // 1) Use VOLE to produce additive shares of x_i * k1:
         //    inputer gets u_i, shuffler gets v_i, with u_i + v_i = x_i * k1.
         let x_values: Vec<FE> = authenticated_xs.iter().map(|x| x.val()).collect();
-        let k1_auth_xis = k1_vole_sender.commit_auth(channel, &x_values)
+        let k1_auth_xis = k1_vole_sender
+            .commit_auth(channel, &x_values)
             .map_err(|e| anyhow!("Failed to get secret shares of xi * k1: {e}"))?;
         let us: Vec<FE> = k1_auth_xis.iter().map(|share| share.pad()).collect();
 
-        let k1_auth_rand = k1_vole_sender.random_auth(channel, 1)
+        let k1_auth_rand = k1_vole_sender
+            .random_auth(channel, 1)
             .map_err(|e| anyhow!("Failed to get secret shares of rand * k1: {e}"))?[0];
 
         // 2) Inputer authenticates u_i under shuffler key delta_1.
-        let authenticated_us = vole_sender.commit_auth(channel, &us)
+        let authenticated_us = vole_sender
+            .commit_auth(channel, &us)
             .map_err(|e| anyhow!("Failed to authenticate ui values: {e}"))?;
 
-        let authenticated_x0 = vole_sender.commit_auth(channel, &[k1_auth_rand.val()])
+        let authenticated_x0 = vole_sender
+            .commit_auth(channel, &[k1_auth_rand.val()])
             .map_err(|e| anyhow!("Failed to authenticate x0 value: {e}"))?[0];
 
-        let authenticated_u0 = vole_sender.commit_auth(channel, &[k1_auth_rand.pad()])
+        let authenticated_u0 = vole_sender
+            .commit_auth(channel, &[k1_auth_rand.pad()])
             .map_err(|e| anyhow!("Faile to authenticate u0 value: {e}"))?[0];
 
-        let authenticated_v0 = vole_receiver.commit_auth(channel, 1)
+        let authenticated_v0 = vole_receiver
+            .commit_auth(channel, 1)
             .map_err(|e| anyhow!("Failed to receive authenticated v0 value: {e}"))?[0];
 
         // 3) Shuffler authenticates v_i under inputer key delta_0 (inputer receives tags).
-        let authenticated_vs = vole_receiver.commit_auth(channel, x_values.len())
+        let authenticated_vs = vole_receiver
+            .commit_auth(channel, x_values.len())
             .map_err(|e| anyhow!("Failed to receive authenticated vi values: {e}"))?;
 
         // 4) Prove the correctness of authenticated ui and xi using a jointly sampled seed.
@@ -144,19 +176,24 @@ impl Inputer {
         let mut seeded_rng = StdRng::from_seed(seed);
         let coeffs = random_fe_vec_from_rng(&mut seeded_rng, authenticated_xs.len())?;
 
-        let u_linear = linear_comb_sender(&authenticated_us, &coeffs, "step2 u linear comb")? + authenticated_u0;
-        let x_linear = linear_comb_sender(authenticated_xs, &coeffs, "step2 x linear comb")? + authenticated_x0;
+        let u_linear = linear_comb_sender(&authenticated_us, &coeffs, "step2 u linear comb")?
+            + authenticated_u0;
+        let x_linear = linear_comb_sender(authenticated_xs, &coeffs, "step2 x linear comb")?
+            + authenticated_x0;
 
         // Open the linear combinations of ui and xi to prove that xi * k1 - ui = vi
-        send_open_shares(&[u_linear, x_linear], channel).map_err(|e| anyhow!("Failed to open the linear combinations: {e}"))?;
+        send_open_shares(&[u_linear, x_linear], channel)
+            .map_err(|e| anyhow!("Failed to open the linear combinations: {e}"))?;
 
         // 5) Prove the correctness of authenticated vi
-        // Currently I do it by proving auth_k1 * x_linear - u_linear - auth_v_linear = 0. 
-        let v_linear = linear_comb_receiver(&authenticated_vs, &coeffs, "step2 v linear comb")? + authenticated_v0;
+        // Currently I do it by proving auth_k1 * x_linear - u_linear - auth_v_linear = 0.
+        let v_linear = linear_comb_receiver(&authenticated_vs, &coeffs, "step2 v linear comb")?
+            + authenticated_v0;
         let authenticated_x_times_k1_minus_uv =
             authenticated_k1 * x_linear.val() - u_linear.val() - v_linear;
 
-        let x_times_k1_minus_uv = receive_open_shares(&[authenticated_x_times_k1_minus_uv], channel)?[0];
+        let x_times_k1_minus_uv =
+            receive_open_shares(&[authenticated_x_times_k1_minus_uv], channel)?[0];
         ensure!(
             x_times_k1_minus_uv == FE::zero(),
             "step2 consistency check failed: x_linear * k1 - u_linear - v_linear != 0"
@@ -184,18 +221,20 @@ impl Inputer {
             "step3 cannot run on empty commitments"
         );
 
-        let authenticated_r_times_x_plus_k: Vec<BeDOZaSender> = authenticated_r_times_x_plus_k0_sender
-            .iter()
-            .zip(authenticated_u_sender.iter())
-            .map(|(lhs, rhs)| *lhs + *rhs)
-            .collect();
+        let authenticated_r_times_x_plus_k: Vec<BeDOZaSender> =
+            authenticated_r_times_x_plus_k0_sender
+                .iter()
+                .zip(authenticated_u_sender.iter())
+                .map(|(lhs, rhs)| *lhs + *rhs)
+                .collect();
 
         send_open_shares(&authenticated_r_times_x_plus_k, channel)
             .map_err(|e| anyhow!("Failed to open ri*(xi+k0)+ui: {e}"))?;
 
         // 2) Receive reauthentication
         // Receive shuffler's reauthentication of y_i := r_i*(x_i+k) under delta_0.
-        let reauthenticated_r_x_k_receiver = vole_receiver.commit_auth(channel, authenticated_r_times_x_plus_k.len())
+        let reauthenticated_r_x_k_receiver = vole_receiver
+            .commit_auth(channel, authenticated_r_times_x_plus_k.len())
             .map_err(|e| anyhow!("Failed to receive reauthentication of ri*(xi+k): {e}"))?;
 
         // Shuffler chooses seed for batched sacrifice check.
@@ -205,24 +244,30 @@ impl Inputer {
             .map_err(|e| anyhow!("step8 failed to receive seed: {}", e))?;
         seed.copy_from_slice(&seed_bytes);
         let mut seeded_rng = StdRng::from_seed(seed);
-        let coeffs =
-            random_fe_vec_from_rng(&mut seeded_rng, authenticated_r_times_x_plus_k.len())?;
+        let coeffs = random_fe_vec_from_rng(&mut seeded_rng, authenticated_r_times_x_plus_k.len())?;
 
         let reauth_linear = linear_comb_receiver(
             &reauthenticated_r_x_k_receiver,
             &coeffs,
             "step3 reauthenticated linear comb",
-        ).map_err(|e| anyhow!("Failed to compute linear combination of reauthenticated ri*(xi+k): {e}"))?;
+        )
+        .map_err(|e| {
+            anyhow!("Failed to compute linear combination of reauthenticated ri*(xi+k): {e}")
+        })?;
         let v_linear = linear_comb_receiver(
             &authenticated_vs,
             &coeffs,
             "step3 authenticated v linear comb",
-        ).map_err(|e| anyhow!("Failed to compute linear combination of authenticated vi: {e}"))?;
+        )
+        .map_err(|e| anyhow!("Failed to compute linear combination of authenticated vi: {e}"))?;
         let auth_linear = linear_comb_sender(
             &authenticated_r_times_x_plus_k,
             &coeffs,
             "step3 authenticated linear comb",
-        ).map_err(|e| anyhow!("Failed to compute linear combination of authenticated ri*(xi+k): {e}"))?;
+        )
+        .map_err(|e| {
+            anyhow!("Failed to compute linear combination of authenticated ri*(xi+k): {e}")
+        })?;
 
         // Simply open the new random linear combination and compare with the old one.
         let opened = receive_open_shares(&[reauth_linear, v_linear], channel)?;
@@ -236,7 +281,8 @@ impl Inputer {
 
         // 3) Also receive and verify inverse
         // Prove y_i * y_i^{-1} = 1 with Wolverine (public-output multiplication).
-        let authenticated_r_x_k_inverse = vole_receiver.commit_auth(channel, reauthenticated_r_x_k_receiver.len())
+        let authenticated_r_x_k_inverse = vole_receiver
+            .commit_auth(channel, reauthenticated_r_x_k_receiver.len())
             .map_err(|e| anyhow!("Failed to receive authenticated inverses of ri*(xi+k): {e}"))?;
         let public_ones = vec![FE::one(); authenticated_r_x_k_inverse.len()];
         wolverine_batch_mul_public_output_verify(
@@ -244,8 +290,9 @@ impl Inputer {
             &reauthenticated_r_x_k_receiver,
             &public_ones,
             vole_receiver,
-            channel
-        ).map_err(|e| anyhow!("Failed to verify inverse: {e}"))?;
+            channel,
+        )
+        .map_err(|e| anyhow!("Failed to verify inverse: {e}"))?;
 
         Ok(authenticated_r_x_k_inverse)
     }
@@ -255,7 +302,6 @@ impl Inputer {
         authenticated_ri_sender: &[BeDOZaSender],
         channel: &mut SwankyChannel,
     ) -> Result<Vec<Group>> {
-        let _ = self.delta_0;
         ensure!(
             !authenticated_ri_sender.is_empty(),
             "step10 cannot run on empty ri commitments"
@@ -299,38 +345,44 @@ impl Inputer {
         ensure!(n > 1, "step5 cannot run with n <= 1");
         // Inputer samples and sends challenge x.
         let x = random_fe_vec_from_rng(rng, 1)?[0];
-        channel.send(&x.to_bytes_le())
+        channel
+            .send(&x.to_bytes_le())
             .map_err(|e| anyhow!("step5 failed to send challenge x: {}", e))?;
 
         // 2) Receive shuffled authenticated x^{pi(i)}
-        let authenticated_permuted_x_powers = vole_receiver.commit_auth(channel, n)
+        let authenticated_permuted_x_powers = vole_receiver
+            .commit_auth(channel, n)
             .map_err(|e| anyhow!("step5 failed to receive authenticated x^(pi(i)): {e}"))?;
 
         // 3) Locally compute authenticated x^i / r_i(x_i+k)
         let x_powers = powers(x, n);
-        let authenticated_products: Vec<BeDOZaReceiver> = x_powers.iter()
+        let authenticated_products: Vec<BeDOZaReceiver> = x_powers
+            .iter()
             .zip(authenticated_r_x_k_inverse.iter())
             .map(|(x_p, r_x_k_inverse)| r_x_k_inverse * *x_p)
             .collect();
-        
+
         // 4) Now verify the permuted things
         // First sample the challenges
         let coeffs = random_fe_vec_from_rng(rng, 3)?;
         let alpha = coeffs[0];
         let beta = coeffs[1];
         let gamma = coeffs[2];
-        send_fe_vec(&[alpha, beta, gamma], channel).map_err(|e| anyhow!("Failed to send challenges alpha, beta, gamma: {e}"))?;
+        send_fe_vec(&[alpha, beta, gamma], channel)
+            .map_err(|e| anyhow!("Failed to send challenges alpha, beta, gamma: {e}"))?;
 
-        // Now locally compute u_pi(i) = alpha + beta * pi(i) + gamma * x^pi(i) 
-        let authenticated_shuffled_ui: Vec<BeDOZaReceiver> = authenticated_pi.iter()
-            .zip(authenticated_permuted_x_powers.iter()) 
+        // Now locally compute u_pi(i) = alpha + beta * pi(i) + gamma * x^pi(i)
+        let authenticated_shuffled_ui: Vec<BeDOZaReceiver> = authenticated_pi
+            .iter()
+            .zip(authenticated_permuted_x_powers.iter())
             .map(|(pi, x_p)| ((*pi * beta) + (*x_p * gamma)) + alpha)
             .collect();
 
         // Now receive authenticated running products: u_pi(1), u_pi(1) * u_pi(2), u_pi(1) * u_pi(2) * u_pi(3), ...
-        let authenticated_running_products = vole_receiver.commit_auth(channel, n - 1)
+        let authenticated_running_products = vole_receiver
+            .commit_auth(channel, n - 1)
             .map_err(|e| anyhow!("Failed to receive running product: {e}"))?;
-        
+
         // Now prove the running product
         let u_chain_left = [
             vec![authenticated_shuffled_ui[0]],
@@ -339,15 +391,17 @@ impl Inputer {
         .concat();
         let u_chain_right = authenticated_shuffled_ui[1..].to_vec();
         wolverine_batch_mul_verify(
-            &u_chain_left, 
-            &u_chain_right, 
-            &authenticated_running_products, 
-            vole_receiver, 
+            &u_chain_left,
+            &u_chain_right,
+            &authenticated_running_products,
+            vole_receiver,
             channel,
-        ).map_err(|e| anyhow!("Verifying the running product failed: {e}"))?;
+        )
+        .map_err(|e| anyhow!("Verifying the running product failed: {e}"))?;
 
-        let product_to_check = receive_open_shares(&[authenticated_running_products[n - 2]], channel)
-            .map_err(|e| anyhow!("Failed to receive the product to check: {e}"))?[0];
+        let product_to_check =
+            receive_open_shares(&[authenticated_running_products[n - 2]], channel)
+                .map_err(|e| anyhow!("Failed to receive the product to check: {e}"))?[0];
 
         let reference_product = (0..n)
             .zip(x_powers.iter())
@@ -359,11 +413,7 @@ impl Inputer {
             "shuffle product identity failed: final product difference is non-zero"
         );
 
-        Ok((
-            x, 
-            authenticated_permuted_x_powers,
-            authenticated_products,
-        ))
+        Ok((x, authenticated_permuted_x_powers, authenticated_products))
     }
 
     pub fn step6_receive_shuffled_oprf_points_and_verify(
@@ -378,17 +428,23 @@ impl Inputer {
 
         // Precompute both tag/MSM products before reading the proof batches so the peer can keep
         // writing while we spend time on local multi-scalar multiplications.
-        let xi_times_inverse_tags: Vec<FE> = authenticated_xi_times_inverse.iter()
+        let xi_times_inverse_tags: Vec<FE> = authenticated_xi_times_inverse
+            .iter()
             .map(|bedoza_receiver| bedoza_receiver.tag())
             .collect();
-        let g_xi_times_inverse_tag_product = msm_pippenger(g_ri, &xi_times_inverse_tags)
-            .map_err(|e| anyhow!("Failed to get multi-exponentiation for g_xi_times_inverse tags: {e}"))?;
+        let g_xi_times_inverse_tag_product =
+            msm_pippenger(g_ri, &xi_times_inverse_tags).map_err(|e| {
+                anyhow!("Failed to get multi-exponentiation for g_xi_times_inverse tags: {e}")
+            })?;
 
-        let shuffled_x_powers_tags: Vec<FE> = authenticated_permuted_x_powers.iter()
+        let shuffled_x_powers_tags: Vec<FE> = authenticated_permuted_x_powers
+            .iter()
             .map(|bedoza_receiver| bedoza_receiver.tag())
             .collect();
-        let shuffled_oprf_x_powers_tag_product = msm_pippenger(&shuffled_oprf, &shuffled_x_powers_tags)
-            .map_err(|e| anyhow!("Failed to get multi-exponentiation for shuffled_oprf^x_powers tags: {e}"))?;
+        let shuffled_oprf_x_powers_tag_product =
+            msm_pippenger(&shuffled_oprf, &shuffled_x_powers_tags).map_err(|e| {
+                anyhow!("Failed to get multi-exponentiation for shuffled_oprf^x_powers tags: {e}")
+            })?;
 
         // 1) Receive and verify the left hand side
         // Shuffler sends [opened_left_product, pad_product] in one batch.
@@ -424,7 +480,8 @@ impl Inputer {
         let shuffled_oprf_x_powers_pad_product = right_proof_elems.swap_remove(0);
 
         let lhs = shuffled_oprf_x_powers_pad_product + shuffled_oprf_x_powers_tag_product;
-        let rhs = shuffled_oprf_x_powers_product.scalar_mul(&authenticated_permuted_x_powers[0].key());
+        let rhs =
+            shuffled_oprf_x_powers_product.scalar_mul(&authenticated_permuted_x_powers[0].key());
 
         ensure!(
             lhs == rhs,
@@ -446,47 +503,49 @@ impl Inputer {
         auth_vole_sender: &mut BufferedVoleSender,
         auth_vole_receiver: &mut BufferedVoleReceiver,
         k1_mul_vole_sender: &mut BufferedVoleSender,
-        _k1_prime_mul_vole_sender: &mut BufferedVoleSender,
         channel: &mut SwankyChannel,
     ) -> Result<Vec<Group>> {
         ensure!(!x_values.is_empty(), "run_full_shuffled_oprf: empty input");
-        let (key_shares, authenticated_xi, authenticated_ri, authenticated_pi) =
-            self.step0_authenticate_oprf_key_and_xi_and_ri_and_receive_pi(
+        let (key_shares, authenticated_xi, authenticated_ri, authenticated_pi) = self
+            .step0_authenticate_oprf_key_and_xi_and_ri_and_receive_pi(
                 x_values,
                 auth_vole_sender,
                 auth_vole_receiver,
                 channel,
             )?;
 
-        let authenticated_r_x_plus_k0 = self.step1_inputer_authenticates_r_times_x_plus_k0_and_proves(
-            &authenticated_xi,
-            &authenticated_ri,
-            key_shares.bedoza_sender(),
-            auth_vole_sender,
-            channel,
-        )?;
+        let authenticated_r_x_plus_k0 = self
+            .step1_inputer_authenticates_r_times_x_plus_k0_and_proves(
+                &authenticated_xi,
+                &authenticated_ri,
+                key_shares.bedoza_sender(),
+                auth_vole_sender,
+                channel,
+            )?;
 
-        let (_u_values, authenticated_u, authenticated_v) = self.step2_vole_share_x_times_k1_and_authenticate(
-            &authenticated_xi,
-            key_shares.bedoza_receiver(),
-            auth_vole_sender,
-            auth_vole_receiver,
-            k1_mul_vole_sender,
-            channel,
-        )?;
+        let (_u_values, authenticated_u, authenticated_v) = self
+            .step2_vole_share_x_times_k1_and_authenticate(
+                &authenticated_xi,
+                key_shares.bedoza_receiver(),
+                auth_vole_sender,
+                auth_vole_receiver,
+                k1_mul_vole_sender,
+                channel,
+            )?;
 
-        let authenticated_r_x_k_inverse = self.step3_open_ri_x_plus_k0_plus_ui_and_receive_reauthenticate(
-            &authenticated_r_x_plus_k0,
-            &authenticated_u,
-            &authenticated_v,
-            auth_vole_receiver,
-            channel,
-        )?;
+        let authenticated_r_x_k_inverse = self
+            .step3_open_ri_x_plus_k0_plus_ui_and_receive_reauthenticate(
+                &authenticated_r_x_plus_k0,
+                &authenticated_u,
+                &authenticated_v,
+                auth_vole_receiver,
+                channel,
+            )?;
 
         let g_ri = self.step4_send_g_ri_and_pad_consistency_proof(&authenticated_ri, channel)?;
 
-        let (_x, authenticated_permuted_x_powers, authenticated_xi_times_inverse) =
-            self.step5_send_challenge_and_receive_authenticated_xpi_and_xi_times_inverse(
+        let (_x, authenticated_permuted_x_powers, authenticated_xi_times_inverse) = self
+            .step5_send_challenge_and_receive_authenticated_xpi_and_xi_times_inverse(
                 &authenticated_pi,
                 &authenticated_r_x_k_inverse,
                 rng,

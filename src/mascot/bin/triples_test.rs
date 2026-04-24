@@ -1,14 +1,15 @@
 use anyhow::{Context, Result, bail};
-use circuit_psi::base_cot::BaseCot;
-use circuit_psi::bedoza::{
-    BeDOZaTriple, open_values_receive, open_values_send,
+use circuit_psi::{
+    base_cot::BaseCot,
+    bedoza::{BeDOZaTriple, open_values_receive, open_values_send},
+    mascot::triple::{MascotTripleReceiver, MascotTripleSender},
+    math::{defines::FE, scalar_field::fq},
+    network::tcp_channel::{SwankyChannel, connect_with_retry, listen_to},
+    vole::{
+        vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
+        vole_triple::LPN21,
+    },
 };
-use circuit_psi::mascot::triple::{MascotTripleReceiver, MascotTripleSender};
-use circuit_psi::network::tcp_channel::{SwankyChannel, connect_with_retry, listen_to};
-use circuit_psi::scalar_field::fq;
-use circuit_psi::vole::field_config::FE;
-use circuit_psi::vole_triple::LPN21;
-use circuit_psi::vole_buffer::{BufferedVoleReceiver, BufferedVoleSender};
 use std::time::Instant;
 
 const DEFAULT_ADDR: &str = "127.0.0.1:19110";
@@ -27,15 +28,18 @@ fn open_authenticated_triples(
 
     open_values_send(&a_shares, io).context("failed to send opened a shares")?;
     *comm += (a_shares.len() as u64) * 64;
-    let opened_a = open_values_receive(&a_shares, io).context("failed to receive opened a shares")?;
+    let opened_a =
+        open_values_receive(&a_shares, io).context("failed to receive opened a shares")?;
 
     open_values_send(&b_shares, io).context("failed to send opened b shares")?;
     *comm += (b_shares.len() as u64) * 64;
-    let opened_b = open_values_receive(&b_shares, io).context("failed to receive opened b shares")?;
+    let opened_b =
+        open_values_receive(&b_shares, io).context("failed to receive opened b shares")?;
 
     open_values_send(&c_shares, io).context("failed to send opened c shares")?;
     *comm += (c_shares.len() as u64) * 64;
-    let opened_c = open_values_receive(&c_shares, io).context("failed to receive opened c shares")?;
+    let opened_c =
+        open_values_receive(&c_shares, io).context("failed to receive opened c shares")?;
 
     Ok((0..triples.len())
         .map(|i| (opened_a[i], opened_b[i], opened_c[i]))
@@ -47,9 +51,8 @@ fn run_sender(addr: &str, n: usize) -> Result<()> {
     let mut comm = 0u64;
     let local_key = fq(DELTA_SENDER);
 
-    let mut auth_vole_sender =
-        BufferedVoleSender::init(&mut io, LPN21)
-            .map_err(|e| anyhow::anyhow!("init auth VOLE sender failed: {e}"))?;
+    let mut auth_vole_sender = BufferedVoleSender::init(&mut io, LPN21)
+        .map_err(|e| anyhow::anyhow!("init auth VOLE sender failed: {e}"))?;
     let mut auth_vole_receiver = BufferedVoleReceiver::init(&mut io, -local_key, LPN21)
         .map_err(|e| anyhow::anyhow!("init auth VOLE receiver failed: {e}"))?;
 
@@ -74,14 +77,25 @@ fn run_sender(addr: &str, n: usize) -> Result<()> {
         chunks.push(local);
     }
     let elapsed = start.elapsed();
+
+    println!("role: sender");
+    println!("triples n={}: {:?}", n, elapsed);
+    println!("comm bytes before verification (counted): {}", comm);
+    println!(
+        "channel bytes sent before verification: {}",
+        io.bytes_sent()
+    );
+    println!(
+        "channel bytes received before verification: {}",
+        io.bytes_received()
+    );
+
     let mut ok = true;
     for chunk in &chunks {
         let opened = open_authenticated_triples(&mut io, chunk, &mut comm)?;
         ok &= opened.iter().all(|(a, b, c)| *c == *a * *b);
     }
 
-    println!("role: sender");
-    println!("triples n={}: {:?}", n, elapsed);
     println!(
         "all triple checks c = a*b: {}",
         if ok { "PASS" } else { "FAIL" }
@@ -99,9 +113,8 @@ fn run_receiver(addr: &str, n: usize) -> Result<()> {
 
     let mut auth_vole_receiver = BufferedVoleReceiver::init(&mut io, -local_key, LPN21)
         .map_err(|e| anyhow::anyhow!("init auth VOLE receiver failed: {e}"))?;
-    let mut auth_vole_sender =
-        BufferedVoleSender::init(&mut io, LPN21)
-            .map_err(|e| anyhow::anyhow!("init auth VOLE sender failed: {e}"))?;
+    let mut auth_vole_sender = BufferedVoleSender::init(&mut io, LPN21)
+        .map_err(|e| anyhow::anyhow!("init auth VOLE sender failed: {e}"))?;
 
     let start = Instant::now();
 
@@ -126,14 +139,25 @@ fn run_receiver(addr: &str, n: usize) -> Result<()> {
         chunks.push(local);
     }
     let elapsed = start.elapsed();
+
+    println!("role: receiver");
+    println!("triples n={}: {:?}", n, elapsed);
+    println!("comm bytes before verification (counted): {}", comm);
+    println!(
+        "channel bytes sent before verification: {}",
+        io.bytes_sent()
+    );
+    println!(
+        "channel bytes received before verification: {}",
+        io.bytes_received()
+    );
+
     let mut ok = true;
     for chunk in &chunks {
         let opened = open_authenticated_triples(&mut io, chunk, &mut comm)?;
         ok &= opened.iter().all(|(a, b, c)| *c == *a * *b);
     }
 
-    println!("role: receiver");
-    println!("triples n={}: {:?}", n, elapsed);
     println!(
         "all triple checks c = a*b: {}",
         if ok { "PASS" } else { "FAIL" }

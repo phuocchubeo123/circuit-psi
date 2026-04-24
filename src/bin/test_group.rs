@@ -1,5 +1,5 @@
 use anyhow::Result;
-use circuit_psi::{bedoza::defines::random_fe_vec, group::Group};
+use circuit_psi::math::{defines::random_fe_vec, group::Group};
 use std::hint::black_box;
 use std::time::Instant;
 

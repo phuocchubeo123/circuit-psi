@@ -1,10 +1,12 @@
 use anyhow::{Context, Result, anyhow, ensure};
 use circuit_psi::{
-    scalar_field::fq,
-    shuffle_shuffler::Shuffler,
+    math::scalar_field::fq,
+    shuffled_oprf::shuffle_shuffler::Shuffler,
     tcp_channel::listen_to,
-    vole_triple::LPN21,
-    vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
+    vole::{
+        vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
+        vole_triple::LPN21,
+    },
 };
 use rand::{Rng, RngExt, SeedableRng, rngs::StdRng};
 use std::time::Instant;
@@ -43,6 +45,7 @@ fn main() -> Result<()> {
     let total_start = Instant::now();
 
     let delta_1 = fq(131);
+    let shuffler_vole_key = fq(149);
 
     let mut channel = timed("listen_to", || {
         listen_to(SWANKY_ADDR).context("listen swanky channel")
@@ -56,7 +59,7 @@ fn main() -> Result<()> {
         BufferedVoleSender::init(&mut channel, LPN21)
             .map_err(|e| anyhow!("init auth sender VOLE failed: {}", e))
     })?;
-    let shuffler = Shuffler::new(delta_1);
+    let shuffler = Shuffler::new(delta_1, shuffler_vole_key);
     let mut protocol_rng = StdRng::from_seed(SHUFFLER_RNG_SEED);
     let mut perm_rng = rand::rng();
 
@@ -66,7 +69,6 @@ fn main() -> Result<()> {
 
     let (
         shuffler_key_share,
-        k1,
         authenticated_inputs,
         authenticated_ri_receiver,
         authenticated_pi_sender,
@@ -80,7 +82,7 @@ fn main() -> Result<()> {
     })?;
 
     let mut k1_mul_vole_receiver = timed("init_k1_mul_vole_receiver", || {
-        BufferedVoleReceiver::init(&mut channel, k1, LPN21)
+        BufferedVoleReceiver::init(&mut channel, shuffler_vole_key, LPN21)
             .map_err(|e| anyhow!("init k1 mul receiver VOLE failed: {}", e))
     })?;
 
@@ -98,7 +100,6 @@ fn main() -> Result<()> {
         shuffler.step2_vole_share_x_times_k1_and_authenticate(
             &authenticated_inputs,
             shuffler_key_share.bedoza_sender(),
-            k1,
             &mut auth_vole_receiver,
             &mut auth_vole_sender,
             &mut k1_mul_vole_receiver,

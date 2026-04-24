@@ -1,9 +1,11 @@
-use crate::scalar_field::FourQScalarField;
+use crate::math::scalar_field::FourQScalarField;
 use anyhow::Result;
 use rand::Rng;
 use rand::RngExt;
 
 pub type FE = FourQScalarField;
+// FE_LIMBS = FE length / 2 (for 32-byte FE represented as two 16-byte u128 limbs).
+pub const FE_LIMBS: usize = 2;
 
 pub fn random_fe_vec(cnt: usize) -> Result<Vec<FE>> {
     let mut rng = rand::rng();

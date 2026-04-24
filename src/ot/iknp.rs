@@ -1,5 +1,5 @@
-use crate::ot::OTCO;
 use crate::comm_util::*;
+use crate::ot::OTCO;
 use crate::tcp_channel::SwankyChannel;
 use psi_aes::prg::PRG;
 use std::convert::TryInto;
@@ -17,7 +17,7 @@ pub struct IKNP {
     delta: Option<[u8; NUM_BYTES]>,
     setup: bool,
     pub s: [bool; NUM_BITS],
-    local_r: [bool; 2*NUM_BITS],
+    local_r: [bool; 2 * NUM_BITS],
     local_out: Vec<[u8; NUM_BYTES]>,
     g0: Option<Vec<PRG>>,
     g1: Option<Vec<PRG>>,
@@ -33,7 +33,7 @@ impl IKNP {
             delta: None,
             setup: false,
             s: [false; NUM_BITS],
-            local_r: [false; 2*NUM_BITS],
+            local_r: [false; 2 * NUM_BITS],
             local_out: vec![[0u8; NUM_BYTES]; BLOCK_SIZE],
             g0: None,
             g1: None,
@@ -43,7 +43,13 @@ impl IKNP {
         }
     }
 
-    pub fn setup_send(&mut self, io: &mut SwankyChannel, in_s: Option<&[bool]>, in_k0: Option<&[[u8; 16]]>, comm: &mut u64) {
+    pub fn setup_send(
+        &mut self,
+        io: &mut SwankyChannel,
+        in_s: Option<&[bool]>,
+        in_k0: Option<&[[u8; 16]]>,
+        comm: &mut u64,
+    ) {
         self.setup = true;
 
         if let Some(in_s) = in_s {
@@ -61,7 +67,8 @@ impl IKNP {
         }
 
         self.g0 = Some(
-            self.k0.iter()
+            self.k0
+                .iter()
                 .enumerate()
                 .map(|(i, key)| {
                     let prg = PRG::new(Some(key), (i + (self.s[i] as usize) * NUM_BITS) as u64);
@@ -73,7 +80,13 @@ impl IKNP {
         self.delta = Some(bool_to_block(&self.s));
     }
 
-    pub fn setup_recv(&mut self, io: &mut SwankyChannel, in_k0: Option<&[[u8; 16]]>, in_k1: Option<&[[u8; 16]]>, comm: &mut u64) {
+    pub fn setup_recv(
+        &mut self,
+        io: &mut SwankyChannel,
+        in_k0: Option<&[[u8; 16]]>,
+        in_k1: Option<&[[u8; 16]]>,
+        comm: &mut u64,
+    ) {
         self.setup = true;
 
         if let (Some(in_k0), Some(in_k1)) = (in_k0, in_k1) {
@@ -87,7 +100,8 @@ impl IKNP {
         }
 
         self.g0 = Some(
-            self.k0.iter()
+            self.k0
+                .iter()
                 .enumerate()
                 .map(|(i, key)| {
                     let prg = PRG::new(Some(key), i as u64);
@@ -96,7 +110,8 @@ impl IKNP {
                 .collect(),
         );
         self.g1 = Some(
-            self.k1.iter()
+            self.k1
+                .iter()
                 .enumerate()
                 .map(|(i, key)| {
                     let prg = PRG::new(Some(key), (i + NUM_BITS) as u64);
@@ -106,14 +121,20 @@ impl IKNP {
         );
     }
 
-    pub fn send_pre(&mut self, io: &mut SwankyChannel, out: &mut [[u8; NUM_BYTES]], length: usize, comm: &mut u64) {
+    pub fn send_pre(
+        &mut self,
+        io: &mut SwankyChannel,
+        out: &mut [[u8; NUM_BYTES]],
+        length: usize,
+        comm: &mut u64,
+    ) {
         if !self.setup {
             self.setup_send(io, None, None, comm);
         }
 
         let mut idx = 0;
         while idx + BLOCK_SIZE <= length {
-            self.send_pre_block(io, &mut out[idx..idx+BLOCK_SIZE], BLOCK_SIZE, comm);
+            self.send_pre_block(io, &mut out[idx..idx + BLOCK_SIZE], BLOCK_SIZE, comm);
             idx += BLOCK_SIZE;
         }
 
@@ -131,7 +152,13 @@ impl IKNP {
         }
     }
 
-    fn send_pre_block(&mut self, io: &mut SwankyChannel, out: &mut [[u8; NUM_BYTES]], length: usize, comm: &mut u64) {
+    fn send_pre_block(
+        &mut self,
+        io: &mut SwankyChannel,
+        out: &mut [[u8; NUM_BYTES]],
+        length: usize,
+        comm: &mut u64,
+    ) {
         let local_block_size = (length + NUM_BITS - 1) / NUM_BITS * NUM_BITS;
 
         let mut t = vec![[0u8; NUM_BYTES]; BLOCK_SIZE];
@@ -158,7 +185,14 @@ impl IKNP {
         *comm += 0; // Only receive data in this function, does not send anything
     }
 
-    pub fn recv_pre(&mut self, io: &mut SwankyChannel, out: &mut [[u8; NUM_BYTES]], r: &[bool], length: usize, comm: &mut u64) {
+    pub fn recv_pre(
+        &mut self,
+        io: &mut SwankyChannel,
+        out: &mut [[u8; NUM_BYTES]],
+        r: &[bool],
+        length: usize,
+        comm: &mut u64,
+    ) {
         if !self.setup {
             self.setup_recv(io, None, None, comm);
         }
@@ -172,20 +206,32 @@ impl IKNP {
         let mut idx = 0;
 
         while idx + BLOCK_SIZE <= length {
-            self.recv_pre_block(io, &mut out[idx..idx+BLOCK_SIZE], &block_r[idx / NUM_BITS..(idx + BLOCK_SIZE) / NUM_BITS], BLOCK_SIZE, comm);
+            self.recv_pre_block(
+                io,
+                &mut out[idx..idx + BLOCK_SIZE],
+                &block_r[idx / NUM_BITS..(idx + BLOCK_SIZE) / NUM_BITS],
+                BLOCK_SIZE,
+                comm,
+            );
             idx += BLOCK_SIZE;
         }
 
         let remaining = length - idx;
         if remaining > 0 {
             let mut temp_out = vec![[0u8; NUM_BYTES]; BLOCK_SIZE];
-            self.recv_pre_block(io, &mut temp_out, &block_r[idx / NUM_BITS..], remaining, comm);
+            self.recv_pre_block(
+                io,
+                &mut temp_out,
+                &block_r[idx / NUM_BITS..],
+                remaining,
+                comm,
+            );
             out[idx..].copy_from_slice(&temp_out[..remaining]);
         }
 
         if self.malicious {
             let mut prg = PRG::new(None, 0);
-            let mut local_r = [false; 2*NUM_BITS];
+            let mut local_r = [false; 2 * NUM_BITS];
             prg.random_bool_array(&mut local_r);
             let mut local_r_block = vec![[0u8; NUM_BYTES]; 2];
             for (i, chunk) in local_r.chunks(NUM_BITS).enumerate() {
@@ -198,7 +244,14 @@ impl IKNP {
         }
     }
 
-    fn recv_pre_block(&mut self, io: &mut SwankyChannel, out: &mut [[u8; NUM_BYTES]], r: &[[u8; NUM_BYTES]], length: usize, comm: &mut u64) {
+    fn recv_pre_block(
+        &mut self,
+        io: &mut SwankyChannel,
+        out: &mut [[u8; NUM_BYTES]],
+        r: &[[u8; NUM_BYTES]],
+        length: usize,
+        comm: &mut u64,
+    ) {
         let mut t = vec![[0u8; NUM_BYTES]; BLOCK_SIZE];
         let mut tmp = vec![[0u8; NUM_BYTES]; BLOCK_SIZE];
         let mut res = vec![[0u8; NUM_BYTES]; BLOCK_SIZE];
@@ -222,7 +275,13 @@ impl IKNP {
         transpose(out, &t);
     }
 
-    pub fn send_cot(&mut self, io: &mut SwankyChannel, data: &mut [[u8; NUM_BYTES]], length: usize, comm: &mut u64) {
+    pub fn send_cot(
+        &mut self,
+        io: &mut SwankyChannel,
+        data: &mut [[u8; NUM_BYTES]],
+        length: usize,
+        comm: &mut u64,
+    ) {
         self.send_pre(io, data, length, comm);
 
         if self.malicious {
@@ -232,7 +291,14 @@ impl IKNP {
         }
     }
 
-    pub fn recv_cot(&mut self, io: &mut SwankyChannel, data: &mut [[u8; NUM_BYTES]], r: &[bool], length: usize, comm: &mut u64) {
+    pub fn recv_cot(
+        &mut self,
+        io: &mut SwankyChannel,
+        data: &mut [[u8; NUM_BYTES]],
+        r: &[bool],
+        length: usize,
+        comm: &mut u64,
+    ) {
         self.recv_pre(io, data, r, length, comm);
 
         if self.malicious {
@@ -240,7 +306,13 @@ impl IKNP {
         }
     }
 
-    pub fn send_check(&mut self, io: &mut SwankyChannel, out: &[[u8; NUM_BYTES]], length: usize, comm: &mut u64) -> bool {
+    pub fn send_check(
+        &mut self,
+        io: &mut SwankyChannel,
+        out: &[[u8; NUM_BYTES]],
+        length: usize,
+        comm: &mut u64,
+    ) -> bool {
         let mut seed2 = [0u8; 16];
         let mut x = [0u8; NUM_BYTES];
         let mut t = [[0u8; NUM_BYTES]; 2];
@@ -276,7 +348,11 @@ impl IKNP {
         x = receive_block::<NUM_BYTES>(io).expect("Failed to receive x")[0];
         // Receive t
         let received_data = receive_block::<NUM_BYTES>(io).expect("Failed to receive t");
-        assert_eq!(received_data.len(), 2, "Expected exactly 2 elements in received data");
+        assert_eq!(
+            received_data.len(),
+            2,
+            "Expected exactly 2 elements in received data"
+        );
         t = [received_data[0], received_data[1]]; // Convert Vec to array
 
         let delta = self.delta.expect("Delta must be set during setup");
@@ -286,7 +362,14 @@ impl IKNP {
         cmp_blocks(&q, &t)
     }
 
-    pub fn recv_check(&mut self, io: &mut SwankyChannel, out: &[[u8; NUM_BYTES]], r: &[bool], length: usize, comm: &mut u64) {
+    pub fn recv_check(
+        &mut self,
+        io: &mut SwankyChannel,
+        out: &[[u8; NUM_BYTES]],
+        r: &[bool],
+        length: usize,
+        comm: &mut u64,
+    ) {
         let select = [[0u8; NUM_BYTES], [255u8; NUM_BYTES]]; // zero_block and all_one_block
         let mut seed2 = [0u8; 16];
         let mut x = [0u8; NUM_BYTES];
@@ -362,7 +445,7 @@ fn mul128(a: &[u8; NUM_BYTES], b: &[u8; NUM_BYTES], res: &mut [[u8; NUM_BYTES]; 
     // Perform carry-less multiplications
     let z00 = clmul64(a0, b0); // a0 * b0
     let z01 = clmul64(a0, b1) ^ clmul64(a1, b0); // (a0 * b1) ^ (a1 * b0)
-    let z02 = clmul64(a1, b1); 
+    let z02 = clmul64(a1, b1);
 
     // Assemble the result into two 128-bit limbs
     r1[0..8].copy_from_slice(&((z00 & mask) as u64).to_le_bytes());
@@ -375,7 +458,6 @@ fn mul128(a: &[u8; NUM_BYTES], b: &[u8; NUM_BYTES], res: &mut [[u8; NUM_BYTES]; 
     res[1] = r2;
 }
 
-
 // Helper function to perform 64-bit carry-less multiplication
 fn clmul64(a: u64, b: u64) -> u128 {
     let mut result = 0u128;
@@ -387,7 +469,11 @@ fn clmul64(a: u64, b: u64) -> u128 {
     result
 }
 
-fn vector_inn_prdt_sum_no_red(res: &mut [[u8; NUM_BYTES]; 2], a: &[[u8; NUM_BYTES]], b: &[[u8; NUM_BYTES]]) {
+fn vector_inn_prdt_sum_no_red(
+    res: &mut [[u8; NUM_BYTES]; 2],
+    a: &[[u8; NUM_BYTES]],
+    b: &[[u8; NUM_BYTES]],
+) {
     // let mut r1 = [0u8; 16]; // Accumulator for first half
     // let mut r2 = [0u8; 16]; // Accumulator for second half
     let mut r1 = [0u8; NUM_BYTES];

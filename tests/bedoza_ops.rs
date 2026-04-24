@@ -1,5 +1,6 @@
-use circuit_psi::bedoza::{
-    BeDOZa, bedoza_receiver::BeDOZaReceiver, bedoza_sender::BeDOZaSender, defines::FE,
+use circuit_psi::{
+    bedoza::{BeDOZa, bedoza_receiver::BeDOZaReceiver, bedoza_sender::BeDOZaSender},
+    math::defines::FE,
 };
 
 fn fe(n: u8) -> FE {

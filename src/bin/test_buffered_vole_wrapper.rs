@@ -1,14 +1,15 @@
-use clap::Parser;
-use circuit_psi::bedoza::{bedoza_receiver::BeDOZaReceiver, bedoza_sender::BeDOZaSender};
-use circuit_psi::scalar_field::{FourQScalarField, fq};
-use circuit_psi::tcp_channel::{connect_with_retry, listen_to};
-use circuit_psi::vole_triple::LPN21;
-use circuit_psi::vole_buffer::{BufferedVoleReceiver, BufferedVoleSender};
-use eyre::WrapErr;
-use std::{
-    net::TcpListener,
-    thread,
+use circuit_psi::{
+    bedoza::{bedoza_receiver::BeDOZaReceiver, bedoza_sender::BeDOZaSender},
+    math::{defines::FE, scalar_field::fq},
+    tcp_channel::{connect_with_retry, listen_to},
+    vole::{
+        vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
+        vole_triple::LPN21,
+    },
 };
+use clap::Parser;
+use eyre::WrapErr;
+use std::{net::TcpListener, thread};
 use swanky_channel_legacy::AesRng;
 
 const DEFAULT_EXTEND_CHUNK: usize = 10_000;
@@ -26,7 +27,7 @@ struct Args {
     materialize_2: usize,
 }
 
-fn make_inputs(offset: u64, n: usize) -> Vec<FourQScalarField> {
+fn make_inputs(offset: u64, n: usize) -> Vec<FE> {
     (0..n).map(|i| fq(offset + i as u64)).collect()
 }
 
@@ -69,7 +70,7 @@ fn sender_party(
 
 fn receiver_party(
     addr: &str,
-    delta: FourQScalarField,
+    delta: FE,
     extend_chunk: usize,
     materialize_1: usize,
     materialize_2: usize,
@@ -101,11 +102,7 @@ fn receiver_party(
     ))
 }
 
-fn verify_batch(
-    delta: FourQScalarField,
-    sender_out: &[BeDOZaSender],
-    receiver_out: &[BeDOZaReceiver],
-) {
+fn verify_batch(delta: FE, sender_out: &[BeDOZaSender], receiver_out: &[BeDOZaReceiver]) {
     assert_eq!(sender_out.len(), receiver_out.len());
     for (sv, rv) in sender_out.iter().zip(receiver_out.iter()) {
         assert_eq!(sv.val() * delta - sv.pad(), rv.tag());
@@ -118,7 +115,10 @@ fn main() -> eyre::Result<()> {
     let delta = fq(7);
 
     let listener = TcpListener::bind("127.0.0.1:0").wrap_err("bind localhost listener")?;
-    let addr_str = listener.local_addr().wrap_err("read listener address")?.to_string();
+    let addr_str = listener
+        .local_addr()
+        .wrap_err("read listener address")?
+        .to_string();
     drop(listener);
 
     let sender_addr = addr_str.clone();
@@ -130,31 +130,19 @@ fn main() -> eyre::Result<()> {
             args.materialize_2,
         )
     });
-    let (
-        receiver_random,
-        receiver_1,
-        receiver_2,
-        receiver_sent,
-        receiver_received,
-        receiver_left,
-    ) = receiver_party(
-        &addr_str,
-        delta,
-        args.extend_chunk,
-        args.materialize_1,
-        args.materialize_2,
-    )?;
-    let (
-        sender_random,
-        sender_1,
-        sender_2,
-        sender_sent,
-        sender_received,
-        sender_left,
-    ) = sender_handle
-        .join()
-        .expect("sender thread panicked")
-        .wrap_err("sender party failed")?;
+    let (receiver_random, receiver_1, receiver_2, receiver_sent, receiver_received, receiver_left) =
+        receiver_party(
+            &addr_str,
+            delta,
+            args.extend_chunk,
+            args.materialize_1,
+            args.materialize_2,
+        )?;
+    let (sender_random, sender_1, sender_2, sender_sent, sender_received, sender_left) =
+        sender_handle
+            .join()
+            .expect("sender thread panicked")
+            .wrap_err("sender party failed")?;
 
     verify_batch(delta, &sender_random, &receiver_random);
     verify_batch(delta, &sender_1, &receiver_1);

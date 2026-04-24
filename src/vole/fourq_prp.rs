@@ -1,8 +1,7 @@
+use crate::math::defines::FE;
 use aes::Aes256;
 use aes::cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray};
 use rand08::Rng;
-
-pub type FE = crate::vole::field_config::FE;
 
 pub struct FieldPRP {
     key: [u8; 32],

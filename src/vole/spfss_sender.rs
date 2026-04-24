@@ -1,13 +1,16 @@
-use crate::comm_util::*;
-use crate::pre_ot::OTPre;
-use crate::tcp_channel::SwankyChannel;
-use crate::vole::field_config::TwoKeyPRP;
-use crate::vole::field_config::FE_LIMBS;
-use psi_aes::prg::PRG;
+use crate::{
+    comm_util::*,
+    math::{
+        defines::{FE, FE_LIMBS},
+        scalar_field::random_fourq_elements_from_prg,
+    },
+    pre_ot::OTPre,
+    tcp_channel::SwankyChannel,
+    vole::field_config::TwoKeyPRP,
+};
 use psi_aes::hash::Hash;
+use psi_aes::prg::PRG;
 use std::convert::TryInto;
-
-pub type FE = crate::vole::field_config::FE;
 
 fn fe_from_digest(_hash: &Hash, digest: [u8; 32]) -> FE {
     FE::from_bytes_le_mod_order(&digest)
@@ -42,7 +45,7 @@ impl SpfssSenderFp {
         let leave_n = 1 << (depth - 1);
         let mut prg = PRG::new(None, 0);
         let mut seed = [FE::zero(); 1];
-        crate::scalar_field::random_fourq_elements_from_prg(&mut prg, &mut seed);
+        random_fourq_elements_from_prg(&mut prg, &mut seed);
         Self {
             seed: seed[0],
             delta: FE::zero(),
@@ -63,12 +66,20 @@ impl SpfssSenderFp {
     }
 
     /// Send OT messages and secret sum.
-    pub fn send(&mut self, io: &mut SwankyChannel, ot: &mut OTPre<FE_LIMBS>, s: usize, comm: &mut u64) {
-        let ot_msg_0 = self.m0
+    pub fn send(
+        &mut self,
+        io: &mut SwankyChannel,
+        ot: &mut OTPre<FE_LIMBS>,
+        s: usize,
+        comm: &mut u64,
+    ) {
+        let ot_msg_0 = self
+            .m0
             .iter()
             .map(|x| fe_to_u128_limbs(*x))
             .collect::<Vec<[u128; FE_LIMBS]>>();
-        let ot_msg_1 = self.m1
+        let ot_msg_1 = self
+            .m1
             .iter()
             .map(|x| fe_to_u128_limbs(*x))
             .collect::<Vec<[u128; FE_LIMBS]>>();
@@ -93,13 +104,13 @@ impl SpfssSenderFp {
             let sz = 1 << h;
             for i in (0..sz).step_by(2) {
                 prp.node_expand_2to4(
-                    &mut self.ggm_tree[2*i..2*i+4], 
-                    &ggm_tree_mem[i..i+2]
+                    &mut self.ggm_tree[2 * i..2 * i + 4],
+                    &ggm_tree_mem[i..i + 2],
                 );
                 self.m0[h] += self.ggm_tree[i * 2] + self.ggm_tree[i * 2 + 2];
                 self.m1[h] += self.ggm_tree[i * 2 + 1] + self.ggm_tree[i * 2 + 3];
             }
-            ggm_tree_mem[..2*sz].copy_from_slice(&self.ggm_tree[..2*sz]);
+            ggm_tree_mem[..2 * sz].copy_from_slice(&self.ggm_tree[..2 * sz]);
         }
 
         // Compute the secret sum
