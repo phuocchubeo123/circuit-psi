@@ -6,10 +6,7 @@ use crate::{
         wolverine::{wolverine_batch_mul_prove, wolverine_batch_mul_verify},
     },
     math::{defines::FE, group::Group},
-    shuffled_oprf::{
-        shuffle_inputer::Inputer,
-        shuffle_shuffler::Shuffler,
-    },
+    shuffled_oprf::{shuffle_inputer::Inputer, shuffle_shuffler::Shuffler},
     tcp_channel::SwankyChannel,
     vole::{
         vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
@@ -64,18 +61,12 @@ fn membership_bitmap(values: &[Group], membership_set: &HashSet<[u8; 32]>) -> Ve
         .collect()
 }
 
-fn relabel_sender_shares(shares: &[BeDOZaSender], side: bool) -> Vec<BeDOZaSender> {
-    shares
-        .iter()
-        .map(|share| BeDOZaSender::new(share.val(), share.pad(), side))
-        .collect()
+fn relabel_sender_shares(shares: &[BeDOZaSender], _side: bool) -> Vec<BeDOZaSender> {
+    shares.to_vec()
 }
 
-fn relabel_receiver_shares(shares: &[BeDOZaReceiver], side: bool) -> Vec<BeDOZaReceiver> {
-    shares
-        .iter()
-        .map(|share| BeDOZaReceiver::new(share.tag(), share.key(), side))
-        .collect()
+fn relabel_receiver_shares(shares: &[BeDOZaReceiver], _side: bool) -> Vec<BeDOZaReceiver> {
+    shares.to_vec()
 }
 
 fn prove_bitmap_shuffle(
@@ -134,11 +125,15 @@ fn prove_bitmap_shuffle(
         .collect();
     let authenticated_permuted_running_products = auth_vole_sender
         .commit_auth(channel, &permuted_running_products)
-        .map_err(|e| anyhow!("permuted bitmap chain: failed to authenticate running products: {e}"))?;
+        .map_err(|e| {
+            anyhow!("permuted bitmap chain: failed to authenticate running products: {e}")
+        })?;
     let mut permuted_left_chain = Vec::with_capacity(authenticated_permuted_running_products.len());
     permuted_left_chain.push(authenticated_permuted_terms[0]);
-    permuted_left_chain
-        .extend_from_slice(&authenticated_permuted_running_products[..authenticated_permuted_running_products.len() - 1]);
+    permuted_left_chain.extend_from_slice(
+        &authenticated_permuted_running_products
+            [..authenticated_permuted_running_products.len() - 1],
+    );
     wolverine_batch_mul_prove(
         &permuted_left_chain,
         &authenticated_permuted_terms[1..],
@@ -169,11 +164,14 @@ fn prove_bitmap_shuffle(
         .collect();
     let authenticated_original_running_products = auth_vole_sender
         .commit_auth(channel, &original_running_products)
-        .map_err(|e| anyhow!("original bitmap chain: failed to authenticate running products: {e}"))?;
+        .map_err(|e| {
+            anyhow!("original bitmap chain: failed to authenticate running products: {e}")
+        })?;
     let mut original_left_chain = Vec::with_capacity(authenticated_original_running_products.len());
     original_left_chain.push(authenticated_original_terms[0]);
     original_left_chain.extend_from_slice(
-        &authenticated_original_running_products[..authenticated_original_running_products.len() - 1],
+        &authenticated_original_running_products
+            [..authenticated_original_running_products.len() - 1],
     );
     wolverine_batch_mul_prove(
         &original_left_chain,
@@ -186,8 +184,10 @@ fn prove_bitmap_shuffle(
 
     send_open_shares(
         &[
-            authenticated_permuted_running_products[authenticated_permuted_running_products.len() - 1],
-            authenticated_original_running_products[authenticated_original_running_products.len() - 1],
+            authenticated_permuted_running_products
+                [authenticated_permuted_running_products.len() - 1],
+            authenticated_original_running_products
+                [authenticated_original_running_products.len() - 1],
         ],
         channel,
     )
@@ -237,8 +237,10 @@ fn verify_bitmap_shuffle<RNG: Rng>(
         .map_err(|e| anyhow!("permuted bitmap chain: failed to receive running products: {e}"))?;
     let mut permuted_left_chain = Vec::with_capacity(authenticated_permuted_running_products.len());
     permuted_left_chain.push(authenticated_permuted_terms[0]);
-    permuted_left_chain
-        .extend_from_slice(&authenticated_permuted_running_products[..authenticated_permuted_running_products.len() - 1]);
+    permuted_left_chain.extend_from_slice(
+        &authenticated_permuted_running_products
+            [..authenticated_permuted_running_products.len() - 1],
+    );
     wolverine_batch_mul_verify(
         &permuted_left_chain,
         &authenticated_permuted_terms[1..],
@@ -258,8 +260,10 @@ fn verify_bitmap_shuffle<RNG: Rng>(
         .map_err(|e| anyhow!("original bitmap chain: failed to receive running products: {e}"))?;
     let mut original_left_chain = Vec::with_capacity(authenticated_original_running_products.len());
     original_left_chain.push(authenticated_original_terms[0]);
-    original_left_chain
-        .extend_from_slice(&authenticated_original_running_products[..authenticated_original_running_products.len() - 1]);
+    original_left_chain.extend_from_slice(
+        &authenticated_original_running_products
+            [..authenticated_original_running_products.len() - 1],
+    );
     wolverine_batch_mul_verify(
         &original_left_chain,
         &authenticated_original_terms[1..],
@@ -271,8 +275,10 @@ fn verify_bitmap_shuffle<RNG: Rng>(
 
     let opened = receive_open_shares(
         &[
-            authenticated_permuted_running_products[authenticated_permuted_running_products.len() - 1],
-            authenticated_original_running_products[authenticated_original_running_products.len() - 1],
+            authenticated_permuted_running_products
+                [authenticated_permuted_running_products.len() - 1],
+            authenticated_original_running_products
+                [authenticated_original_running_products.len() - 1],
         ],
         channel,
     )

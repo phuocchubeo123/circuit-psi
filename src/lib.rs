@@ -8,6 +8,7 @@ pub mod circuit_psi;
 pub mod mascot;
 pub mod ot;
 pub mod shuffled_oprf;
+pub mod utils;
 pub mod vole;
 
 pub use ot::base_cot;

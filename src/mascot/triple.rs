@@ -519,7 +519,7 @@ fn authenticate_triples_to_bedoza(
     let authenticated = sender_shares
         .iter()
         .zip(receiver_shares.iter())
-        .map(|(s, r)| BeDOZa::new(*s, *r))
+        .map(|(s, r)| BeDOZa::new(*s, *r, false))
         .collect::<Vec<_>>();
 
     let mut auth_0 = Vec::with_capacity(n);

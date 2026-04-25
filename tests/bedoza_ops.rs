@@ -8,9 +8,9 @@ fn fe(n: u8) -> FE {
 }
 
 fn make_authenticated_share(value: FE, pad: FE, key: FE, side: bool) -> BeDOZa {
-    let sender = BeDOZaSender::new(value, pad, side);
-    let receiver = BeDOZaReceiver::new(key * value - pad, key, side);
-    BeDOZa::new(sender, receiver)
+    let sender = BeDOZaSender::new(value, pad);
+    let receiver = BeDOZaReceiver::new(key * value - pad, key);
+    BeDOZa::new(sender, receiver, side)
 }
 
 fn make_secret_shares(

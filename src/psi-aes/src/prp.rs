@@ -1,5 +1,5 @@
+use aes::cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit};
 use aes::Aes128;
-use aes::cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray};
 use rand::Rng;
 
 pub struct PRP {
@@ -18,9 +18,7 @@ impl PRP {
 
         let aes = Aes128::new(GenericArray::from_slice(&aes_key));
 
-        PRP {
-            aes: aes,
-        }
+        PRP { aes: aes }
     }
 
     pub fn permute_block(&self, data: &mut [[u8; 16]], nblocks: usize) {

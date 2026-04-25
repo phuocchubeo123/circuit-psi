@@ -1,9 +1,9 @@
 // In this program:
-// 1. Benchmark time to create 100_000 new Aes128 key: about 5 ms 
+// 1. Benchmark time to create 100_000 new Aes128 key: about 5 ms
 
 extern crate aes;
-use aes::Aes128;
 use aes::cipher::KeyInit;
+use aes::Aes128;
 use std::time::Instant;
 
 fn bench_create_key() {
@@ -29,7 +29,10 @@ fn bench_create_key() {
     // Print results
     println!("Benchmark Results:");
     println!("Rekeying 100,000 times took: {} ms", rekey_time);
-    println!("New key initialization 100,000 times took: {} ms", new_key_time);
+    println!(
+        "New key initialization 100,000 times took: {} ms",
+        new_key_time
+    );
 }
 
 fn main() {

@@ -1,6 +1,6 @@
 use circuit_psi::{
     bedoza::{BeDOZa, BeDOZaTriple, bedoza_receiver::BeDOZaReceiver, bedoza_sender::BeDOZaSender},
-    circuit_psi::psi_sum::{PsiSumReceiver, PsiSumSender, open_psi_sum_receive, open_psi_sum_send},
+    circuit_psi::one_side_psu::{OneSidePsuReceiver, OneSidePsuSender},
     math::{defines::FE, scalar_field::fq},
     tcp_channel::{connect_with_retry, listen_to},
     utils::sets::sample_correlated_sets,
@@ -17,7 +17,7 @@ enum Side {
 }
 
 #[derive(Debug, Clone, Parser)]
-#[command(name = "test_psi_sum")]
+#[command(name = "test_one_side_psu")]
 struct Args {
     #[arg(long, value_enum)]
     side: Side,
@@ -31,10 +31,11 @@ struct Args {
     intersection_size: usize,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct PartyRun {
     side: Side,
-    opened_sum: FE,
+    sender_difference_size: usize,
+    union_size: usize,
     bytes_sent: u64,
     bytes_received: u64,
     elapsed_ms: u128,
@@ -51,16 +52,6 @@ fn derive_seed(shared_seed: [u8; 32], label: &[u8]) -> [u8; 32] {
     let digest = hasher.finalize();
     let mut out = [0u8; 32];
     out.copy_from_slice(&digest);
-    out
-}
-
-fn fe_to_hex(value: FE) -> String {
-    let bytes = value.to_bytes_le();
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        use std::fmt::Write as _;
-        let _ = write!(&mut out, "{:02x}", byte);
-    }
     out
 }
 
@@ -120,15 +111,21 @@ fn generate_fake_triples<R: Rng>(
     (side0, side1)
 }
 
-fn expected_psi_sum(sender_set: &[FE], receiver_set: &[FE]) -> FE {
+fn expected_sender_difference(sender_set: &[FE], receiver_set: &[FE]) -> Vec<FE> {
     let receiver_membership: HashSet<[u8; 32]> = receiver_set.iter().map(FE::to_bytes_le).collect();
-    sender_set.iter().fold(FE::zero(), |acc, value| {
-        if receiver_membership.contains(&value.to_bytes_le()) {
-            acc + *value
-        } else {
-            acc
-        }
-    })
+    sender_set
+        .iter()
+        .copied()
+        .filter(|value| !receiver_membership.contains(&value.to_bytes_le()))
+        .collect()
+}
+
+fn expected_union(sender_set: &[FE], receiver_set: &[FE]) -> HashSet<[u8; 32]> {
+    sender_set
+        .iter()
+        .chain(receiver_set.iter())
+        .map(FE::to_bytes_le)
+        .collect()
 }
 
 fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
@@ -144,36 +141,29 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
 
     let (sender_set, receiver_set) =
         sample_correlated_sets(shared_seed, args.set_size, args.intersection_size)?;
-    let expected = expected_psi_sum(&sender_set, &receiver_set);
+    let expected_difference = expected_sender_difference(&sender_set, &receiver_set);
+    let expected_union = expected_union(&sender_set, &receiver_set);
 
     let mut triple_rng = StdRng::from_seed(derive_seed(shared_seed, b"fake-triples"));
     let (sender_triples, _) =
         generate_fake_triples(args.set_size, fq(97), fq(131), &mut triple_rng);
 
-    let mut psi_sum = PsiSumSender::new(fq(97), fq(173), &mut channel)
-        .map_err(|e| eyre::eyre!("sender failed to initialize psi_sum: {e}"))?;
+    let mut one_side_psu = OneSidePsuSender::new(fq(97), fq(173), &mut channel)
+        .map_err(|e| eyre::eyre!("sender failed to initialize one_side_psu: {e}"))?;
     let mut protocol_rng = StdRng::from_seed(derive_seed(shared_seed, b"sender-protocol-rng"));
-    let sum_share = psi_sum
+    one_side_psu
         .run(
             &sender_set,
             &sender_triples,
             &mut protocol_rng,
             &mut channel,
         )
-        .map_err(|e| eyre::eyre!("sender failed to run psi_sum: {e}"))?;
-
-    let opened_sum = open_psi_sum_receive(&sum_share, &mut channel)
-        .map_err(|e| eyre::eyre!("sender failed to receive opened psi_sum: {e}"))?;
-    eyre::ensure!(
-        opened_sum == expected,
-        "sender observed psi_sum {}, expected {}",
-        fe_to_hex(opened_sum),
-        fe_to_hex(expected)
-    );
+        .map_err(|e| eyre::eyre!("sender failed to run one_side_psu: {e}"))?;
 
     Ok(PartyRun {
         side: Side::Sender,
-        opened_sum,
+        sender_difference_size: expected_difference.len(),
+        union_size: expected_union.len(),
         bytes_sent: channel.bytes_sent(),
         bytes_received: channel.bytes_received(),
         elapsed_ms: start.elapsed().as_millis(),
@@ -197,30 +187,53 @@ fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
 
     let (sender_set, receiver_set) =
         sample_correlated_sets(shared_seed, args.set_size, args.intersection_size)?;
-    let expected = expected_psi_sum(&sender_set, &receiver_set);
+    let expected_difference = expected_sender_difference(&sender_set, &receiver_set);
+    let expected_union = expected_union(&sender_set, &receiver_set);
 
     let mut triple_rng = StdRng::from_seed(derive_seed(shared_seed, b"fake-triples"));
     let (_, receiver_triples) =
         generate_fake_triples(args.set_size, fq(97), fq(131), &mut triple_rng);
 
-    let mut psi_sum = PsiSumReceiver::new(fq(131), fq(149), &mut channel)
-        .map_err(|e| eyre::eyre!("receiver failed to initialize psi_sum: {e}"))?;
+    let mut one_side_psu = OneSidePsuReceiver::new(fq(131), fq(149), &mut channel)
+        .map_err(|e| eyre::eyre!("receiver failed to initialize one_side_psu: {e}"))?;
     let mut protocol_rng = StdRng::from_seed(derive_seed(shared_seed, b"receiver-protocol-rng"));
-    let sum_share = psi_sum
+    let opened_products = one_side_psu
         .run(
             &receiver_set,
             &receiver_triples,
             &mut protocol_rng,
             &mut channel,
         )
-        .map_err(|e| eyre::eyre!("receiver failed to run psi_sum: {e}"))?;
+        .map_err(|e| eyre::eyre!("receiver failed to run one_side_psu: {e}"))?;
+    // Zero products correspond to sender elements in the intersection, so filter them out.
+    let sender_difference: Vec<FE> = opened_products
+        .iter()
+        .copied()
+        .filter(|value| *value != FE::zero())
+        .collect();
+    eyre::ensure!(
+        sender_difference == expected_difference,
+        "receiver observed sender difference mismatch: got {} values, expected {}",
+        sender_difference.len(),
+        expected_difference.len()
+    );
 
-    open_psi_sum_send(&sum_share, &mut channel)
-        .map_err(|e| eyre::eyre!("receiver failed to send opened psi_sum: {e}"))?;
+    let union: HashSet<[u8; 32]> = receiver_set
+        .iter()
+        .chain(sender_difference.iter())
+        .map(FE::to_bytes_le)
+        .collect();
+    eyre::ensure!(
+        union == expected_union,
+        "receiver-side reconstructed union size {} does not match expected {}",
+        union.len(),
+        expected_union.len()
+    );
 
     Ok(PartyRun {
         side: Side::Receiver,
-        opened_sum: expected,
+        sender_difference_size: sender_difference.len(),
+        union_size: union.len(),
         bytes_sent: channel.bytes_sent(),
         bytes_received: channel.bytes_received(),
         elapsed_ms: start.elapsed().as_millis(),
@@ -244,12 +257,13 @@ fn main() -> eyre::Result<()> {
     };
 
     println!(
-        "psi_sum_ok side={:?} addr={} set_size={} intersection_size={} opened_sum={}",
+        "one_side_psu_ok side={:?} addr={} set_size={} intersection_size={} sender_difference_size={} union_size={}",
         run.side,
         addr,
         args.set_size,
         args.intersection_size,
-        fe_to_hex(run.opened_sum)
+        run.sender_difference_size,
+        run.union_size
     );
     println!(
         "timing_ms={} bytes_sent={} bytes_received={}",

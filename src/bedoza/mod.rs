@@ -22,13 +22,15 @@ use std::ops::{Add, Mul, Sub};
 pub struct BeDOZa {
     bedoza_sender: BeDOZaSender,
     bedoza_receiver: BeDOZaReceiver,
+    side: bool,
 }
 
 impl BeDOZa {
-    pub fn new(sender: BeDOZaSender, receiver: BeDOZaReceiver) -> Self {
+    pub fn new(sender: BeDOZaSender, receiver: BeDOZaReceiver, side: bool) -> Self {
         BeDOZa {
             bedoza_sender: sender,
             bedoza_receiver: receiver,
+            side,
         }
     }
 
@@ -38,6 +40,10 @@ impl BeDOZa {
 
     pub fn bedoza_receiver(&self) -> &BeDOZaReceiver {
         &self.bedoza_receiver
+    }
+
+    pub fn side(&self) -> bool {
+        self.side
     }
 }
 
@@ -83,16 +89,10 @@ pub fn share_values(
     send_fe_vec(&masked_vals, channel).map_err(|e| anyhow!("Failed to send masked vals: {}", e))?;
 
     // Now add the masked value to the prepared shares to get shares for the actual values
-    let bedoza_shared: Vec<BeDOZa> = prepared_bedoza_senders
+    let bedoza_shared: Vec<BeDOZa> = prepared_bedoza_shares
         .iter()
-        .zip(prepared_bedoza_receivers.iter())
         .zip(masked_vals.iter())
-        .map(
-            |((prepared_sender, prepared_receiver), &masked_val)| BeDOZa {
-                bedoza_sender: prepared_sender + masked_val,
-                bedoza_receiver: prepared_receiver + masked_val,
-            },
-        )
+        .map(|(prepared_share, &masked_val)| *prepared_share + masked_val)
         .collect();
 
     Ok(bedoza_shared)
@@ -102,10 +102,6 @@ pub fn receive_share_values(
     prepared_bedoza_shares: &[BeDOZa],
     channel: &mut SwankyChannel,
 ) -> Result<Vec<BeDOZa>> {
-    let prepared_bedoza_receivers = prepared_bedoza_shares
-        .iter()
-        .map(|share| *share.bedoza_receiver())
-        .collect::<Vec<BeDOZaReceiver>>();
     let prepared_bedoza_senders = prepared_bedoza_shares
         .iter()
         .map(|share| *share.bedoza_sender())
@@ -119,16 +115,10 @@ pub fn receive_share_values(
     let masked_vals =
         receive_fe_vec(channel).map_err(|e| anyhow!("Failed to receive masked vals: {}", e))?;
 
-    let bedoza_shared: Vec<BeDOZa> = prepared_bedoza_senders
+    let bedoza_shared: Vec<BeDOZa> = prepared_bedoza_shares
         .iter()
-        .zip(prepared_bedoza_receivers.iter())
         .zip(masked_vals.iter())
-        .map(
-            |((prepared_sender, prepared_receiver), &masked_val)| BeDOZa {
-                bedoza_sender: prepared_sender + masked_val,
-                bedoza_receiver: prepared_receiver + masked_val,
-            },
-        )
+        .map(|(prepared_share, &masked_val)| *prepared_share + masked_val)
         .collect();
 
     Ok(bedoza_shared)
@@ -169,10 +159,16 @@ impl Add<&BeDOZa> for &BeDOZa {
     type Output = BeDOZa;
 
     fn add(self, other: &BeDOZa) -> BeDOZa {
-        BeDOZa {
-            bedoza_sender: self.bedoza_sender() + other.bedoza_sender(),
-            bedoza_receiver: self.bedoza_receiver() + other.bedoza_receiver(),
-        }
+        assert_eq!(
+            self.side(),
+            other.side(),
+            "Cannot add BeDOZa shares from different sides"
+        );
+        BeDOZa::new(
+            self.bedoza_sender() + other.bedoza_sender(),
+            self.bedoza_receiver() + other.bedoza_receiver(),
+            self.side(),
+        )
     }
 }
 
@@ -204,9 +200,18 @@ impl Add<FE> for &BeDOZa {
     type Output = BeDOZa;
 
     fn add(self, constant: FE) -> BeDOZa {
-        BeDOZa {
-            bedoza_sender: self.bedoza_sender() + constant,
-            bedoza_receiver: self.bedoza_receiver() + constant,
+        if !self.side() {
+            BeDOZa::new(
+                self.bedoza_sender() + constant,
+                *self.bedoza_receiver(),
+                self.side(),
+            )
+        } else {
+            BeDOZa::new(
+                *self.bedoza_sender(),
+                self.bedoza_receiver() + constant,
+                self.side(),
+            )
         }
     }
 }
@@ -223,9 +228,18 @@ impl Sub<FE> for &BeDOZa {
     type Output = BeDOZa;
 
     fn sub(self, constant: FE) -> BeDOZa {
-        BeDOZa {
-            bedoza_sender: self.bedoza_sender() - constant,
-            bedoza_receiver: self.bedoza_receiver() - constant,
+        if !self.side() {
+            BeDOZa::new(
+                self.bedoza_sender() - constant,
+                *self.bedoza_receiver(),
+                self.side(),
+            )
+        } else {
+            BeDOZa::new(
+                *self.bedoza_sender(),
+                self.bedoza_receiver() - constant,
+                self.side(),
+            )
         }
     }
 }
@@ -242,10 +256,16 @@ impl Sub<&BeDOZa> for &BeDOZa {
     type Output = BeDOZa;
 
     fn sub(self, other: &BeDOZa) -> BeDOZa {
-        BeDOZa {
-            bedoza_sender: self.bedoza_sender() - other.bedoza_sender(),
-            bedoza_receiver: self.bedoza_receiver() - other.bedoza_receiver(),
-        }
+        assert_eq!(
+            self.side(),
+            other.side(),
+            "Cannot subtract BeDOZa shares from different sides"
+        );
+        BeDOZa::new(
+            self.bedoza_sender() - other.bedoza_sender(),
+            self.bedoza_receiver() - other.bedoza_receiver(),
+            self.side(),
+        )
     }
 }
 
@@ -261,10 +281,11 @@ impl Mul<FE> for &BeDOZa {
     type Output = BeDOZa;
 
     fn mul(self, constant: FE) -> BeDOZa {
-        BeDOZa {
-            bedoza_sender: self.bedoza_sender() * constant,
-            bedoza_receiver: self.bedoza_receiver() * constant,
-        }
+        BeDOZa::new(
+            self.bedoza_sender() * constant,
+            self.bedoza_receiver() * constant,
+            self.side(),
+        )
     }
 }
 

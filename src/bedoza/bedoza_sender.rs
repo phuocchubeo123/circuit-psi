@@ -8,12 +8,11 @@ use std::ops::{Add, Mul, Sub};
 pub struct BeDOZaSender {
     val: FE,
     pad: FE,
-    side: bool,
 }
 
 impl BeDOZaSender {
-    pub fn new(val: FE, pad: FE, side: bool) -> Self {
-        Self { val, pad, side }
+    pub fn new(val: FE, pad: FE) -> Self {
+        Self { val, pad }
     }
 
     pub fn val(&self) -> FE {
@@ -22,10 +21,6 @@ impl BeDOZaSender {
 
     pub fn pad(&self) -> FE {
         self.pad
-    }
-
-    pub fn side(&self) -> bool {
-        self.side
     }
 }
 
@@ -73,15 +68,9 @@ impl Add<&BeDOZaSender> for &BeDOZaSender {
     type Output = BeDOZaSender;
 
     fn add(self, other: &BeDOZaSender) -> BeDOZaSender {
-        assert_eq!(
-            self.side(),
-            other.side(),
-            "Cannot add BeDOZa senders from different sides"
-        );
         BeDOZaSender {
             val: self.val() + other.val(),
             pad: self.pad() + other.pad(),
-            side: self.side(),
         }
     }
 }
@@ -98,20 +87,9 @@ impl Add<FE> for &BeDOZaSender {
     type Output = BeDOZaSender;
 
     fn add(self, constant: FE) -> BeDOZaSender {
-        if self.side() {
-            // If side = true, don't do anything to the share
-            BeDOZaSender {
-                val: self.val(),
-                pad: self.pad(),
-                side: self.side(),
-            }
-        } else {
-            // If side = false, add the constant to the share
-            BeDOZaSender {
-                val: self.val() + constant,
-                pad: self.pad(),
-                side: self.side(),
-            }
+        BeDOZaSender {
+            val: self.val() + constant,
+            pad: self.pad(),
         }
     }
 }
@@ -128,20 +106,9 @@ impl Sub<FE> for &BeDOZaSender {
     type Output = BeDOZaSender;
 
     fn sub(self, constant: FE) -> BeDOZaSender {
-        if self.side() {
-            // If side = true, don't do anything to the share
-            BeDOZaSender {
-                val: self.val(),
-                pad: self.pad(),
-                side: self.side(),
-            }
-        } else {
-            // If side = false, subtract the constant from the share
-            BeDOZaSender {
-                val: self.val() - constant,
-                pad: self.pad(),
-                side: self.side(),
-            }
+        BeDOZaSender {
+            val: self.val() - constant,
+            pad: self.pad(),
         }
     }
 }
@@ -158,15 +125,9 @@ impl Sub<&BeDOZaSender> for &BeDOZaSender {
     type Output = BeDOZaSender;
 
     fn sub(self, other: &BeDOZaSender) -> BeDOZaSender {
-        assert_eq!(
-            self.side(),
-            other.side(),
-            "Cannot subtract BeDOZa senders from different sides"
-        );
         BeDOZaSender {
             val: self.val() - other.val(),
             pad: self.pad() - other.pad(),
-            side: self.side(),
         }
     }
 }
@@ -186,7 +147,6 @@ impl Mul<FE> for &BeDOZaSender {
         BeDOZaSender {
             val: self.val() * constant,
             pad: self.pad() * constant,
-            side: self.side(),
         }
     }
 }

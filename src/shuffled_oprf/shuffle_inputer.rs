@@ -84,7 +84,7 @@ impl Inputer {
             .map_err(|e| anyhow!("Failed to authenticate the permutation: {e}"))?;
 
         Ok((
-            BeDOZa::new(inputer_k0_sender, shuffler_k1_receiver),
+            BeDOZa::new(inputer_k0_sender, shuffler_k1_receiver, false),
             authenticated_xis,
             authenticated_ris,
             authenticated_pi,

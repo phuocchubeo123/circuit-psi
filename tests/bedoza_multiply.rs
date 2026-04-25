@@ -7,7 +7,7 @@ use circuit_psi::{
         bedoza_sender::BeDOZaSender,
     },
     math::defines::FE,
-    tcp_channel::{SwankyChannel, connect_with_retry, listen_to},
+    tcp_channel::{connect_with_retry, listen_to},
 };
 
 fn fe(n: u8) -> FE {
@@ -25,14 +25,16 @@ fn free_local_addr() -> String {
 fn make_cross_party_share(v0: FE, p0: FE, v1: FE, p1: FE, key0: FE, key1: FE) -> (BeDOZa, BeDOZa) {
     // Party 0 keeps side-0 sender and side-1 receiver (authenticates party 1 sender).
     let party0 = BeDOZa::new(
-        BeDOZaSender::new(v0, p0, false),
-        BeDOZaReceiver::new(key0 * v1 - p1, key0, true),
+        BeDOZaSender::new(v0, p0),
+        BeDOZaReceiver::new(key0 * v1 - p1, key0),
+        false,
     );
 
     // Party 1 keeps side-1 sender and side-0 receiver (authenticates party 0 sender).
     let party1 = BeDOZa::new(
-        BeDOZaSender::new(v1, p1, true),
-        BeDOZaReceiver::new(key1 * v0 - p0, key1, false),
+        BeDOZaSender::new(v1, p1),
+        BeDOZaReceiver::new(key1 * v0 - p0, key1),
+        true,
     );
 
     (party0, party1)

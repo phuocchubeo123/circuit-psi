@@ -63,12 +63,14 @@ fn make_cross_party_share<R: Rng>(
     let share1_pad = sample_fe(rng);
 
     let party0 = BeDOZa::new(
-        BeDOZaSender::new(share0_value, share0_pad, false),
-        BeDOZaReceiver::new(delta0 * share1_value - share1_pad, delta0, true),
+        BeDOZaSender::new(share0_value, share0_pad),
+        BeDOZaReceiver::new(delta0 * share1_value - share1_pad, delta0),
+        false,
     );
     let party1 = BeDOZa::new(
-        BeDOZaSender::new(share1_value, share1_pad, true),
-        BeDOZaReceiver::new(delta1 * share0_value - share0_pad, delta1, false),
+        BeDOZaSender::new(share1_value, share1_pad),
+        BeDOZaReceiver::new(delta1 * share0_value - share0_pad, delta1),
+        true,
     );
 
     (party0, party1)
@@ -105,10 +107,10 @@ fn write_share_columns(writer: &mut dyn Write, share: &BeDOZa) -> Result<()> {
         "{},{},{},{},{},{}",
         fe_to_hex(share.bedoza_sender().val()),
         fe_to_hex(share.bedoza_sender().pad()),
-        share.bedoza_sender().side() as u8,
+        share.side() as u8,
         fe_to_hex(share.bedoza_receiver().tag()),
         fe_to_hex(share.bedoza_receiver().key()),
-        share.bedoza_receiver().side() as u8,
+        (!share.side()) as u8,
     )?;
     Ok(())
 }

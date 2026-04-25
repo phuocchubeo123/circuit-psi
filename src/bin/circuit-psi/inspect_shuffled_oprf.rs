@@ -2,6 +2,7 @@ use circuit_psi::{
     math::{defines::FE, group::Group, scalar_field::fq},
     shuffled_oprf::{shuffle_inputer::Inputer, shuffle_shuffler::Shuffler},
     tcp_channel::{connect_with_retry, listen_to},
+    utils::sets::sample_correlated_sets,
     vole::{
         vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
         vole_triple::LPN21,
@@ -47,71 +48,6 @@ fn derive_seed(shared_seed: [u8; 32], label: &[u8]) -> [u8; 32] {
     let mut out = [0u8; 32];
     out.copy_from_slice(&digest);
     out
-}
-
-fn sample_unique_values(rng: &mut StdRng, count: usize, seen: &mut HashSet<[u8; 32]>) -> Vec<FE> {
-    let mut out = Vec::with_capacity(count);
-    while out.len() < count {
-        let bytes: [u8; 32] = rng.random();
-        if !seen.insert(bytes) {
-            continue;
-        }
-        out.push(FE::from_bytes_le_mod_order(&bytes));
-    }
-    out
-}
-
-fn shuffle_values(rng: &mut StdRng, values: &mut [FE]) {
-    for i in (1..values.len()).rev() {
-        let j = rng.random_range(0..=i);
-        values.swap(i, j);
-    }
-}
-
-fn sample_correlated_sets(
-    shared_seed: [u8; 32],
-    set_size: usize,
-    intersection_size: usize,
-) -> eyre::Result<(Vec<FE>, Vec<FE>)> {
-    eyre::ensure!(set_size > 1, "set size must be > 1");
-    eyre::ensure!(
-        intersection_size <= set_size,
-        "intersection size {} exceeds set size {}",
-        intersection_size,
-        set_size
-    );
-
-    let mut seen = HashSet::with_capacity(2 * set_size - intersection_size);
-
-    let mut common_rng = StdRng::from_seed(derive_seed(shared_seed, b"common-set"));
-    let common = sample_unique_values(&mut common_rng, intersection_size, &mut seen);
-
-    let mut sender_only_rng = StdRng::from_seed(derive_seed(shared_seed, b"sender-only-set"));
-    let sender_only = sample_unique_values(
-        &mut sender_only_rng,
-        set_size - intersection_size,
-        &mut seen,
-    );
-
-    let mut receiver_only_rng = StdRng::from_seed(derive_seed(shared_seed, b"receiver-only-set"));
-    let receiver_only = sample_unique_values(
-        &mut receiver_only_rng,
-        set_size - intersection_size,
-        &mut seen,
-    );
-
-    let mut sender_set = common.clone();
-    sender_set.extend(sender_only);
-    let mut receiver_set = common;
-    receiver_set.extend(receiver_only);
-
-    let mut sender_shuffle_rng = StdRng::from_seed(derive_seed(shared_seed, b"sender-shuffle"));
-    shuffle_values(&mut sender_shuffle_rng, &mut sender_set);
-
-    let mut receiver_shuffle_rng = StdRng::from_seed(derive_seed(shared_seed, b"receiver-shuffle"));
-    shuffle_values(&mut receiver_shuffle_rng, &mut receiver_set);
-
-    Ok((sender_set, receiver_set))
 }
 
 fn random_permutation(n: usize, rng: &mut StdRng) -> Vec<usize> {
@@ -250,31 +186,43 @@ fn sender_party(addr: &str, args: &Args) -> eyre::Result<()> {
 
     let mut protocol_rng = StdRng::from_seed(derive_seed(shared_seed, b"sender-protocol-rng"));
     let inputer = Inputer::new(fq(97), fq(173));
-    let sender_run = inputer.run_full_shuffled_oprf(
-        &sender_set,
-        &mut protocol_rng,
-        &mut auth_vole_sender,
-        &mut auth_vole_receiver,
-        &mut product_vole_sender,
-        &mut channel,
-    )
-    .map_err(|e| eyre::eyre!("sender inputer run failed: {e}"))?;
+    let sender_run = inputer
+        .run_full_shuffled_oprf(
+            &sender_set,
+            &mut protocol_rng,
+            &mut auth_vole_sender,
+            &mut auth_vole_receiver,
+            &mut product_vole_sender,
+            &mut channel,
+        )
+        .map_err(|e| eyre::eyre!("sender inputer run failed: {e}"))?;
 
-    let receiver_permutation =
-        random_permutation(args.set_size, &mut StdRng::from_seed(derive_seed(shared_seed, b"receiver-permutation")));
+    let receiver_permutation = random_permutation(
+        args.set_size,
+        &mut StdRng::from_seed(derive_seed(shared_seed, b"receiver-permutation")),
+    );
     let shuffler = Shuffler::new(fq(97), fq(173));
-    let receiver_run = shuffler.run_full_shuffled_oprf(
-        &receiver_permutation,
-        &mut protocol_rng,
-        &mut auth_vole_sender,
-        &mut auth_vole_receiver,
-        &mut product_vole_receiver,
-        &mut channel,
-    )
-    .map_err(|e| eyre::eyre!("sender shuffler run failed: {e}"))?;
+    let receiver_run = shuffler
+        .run_full_shuffled_oprf(
+            &receiver_permutation,
+            &mut protocol_rng,
+            &mut auth_vole_sender,
+            &mut auth_vole_receiver,
+            &mut product_vole_receiver,
+            &mut channel,
+        )
+        .map_err(|e| eyre::eyre!("sender shuffler run failed: {e}"))?;
 
-    dump_outputs("sender_inputer_shuffled", &sender_run.shuffled_oprf, args.dump_count);
-    dump_outputs("receiver_shuffler_shuffled", &receiver_run.shuffled_oprf, args.dump_count);
+    dump_outputs(
+        "sender_inputer_shuffled",
+        &sender_run.shuffled_oprf,
+        args.dump_count,
+    );
+    dump_outputs(
+        "receiver_shuffler_shuffled",
+        &receiver_run.shuffled_oprf,
+        args.dump_count,
+    );
     println!(
         "sender local_key_share={} peer_key_share={} total_key={}",
         hex_fe(fq(173)),
@@ -326,32 +274,44 @@ fn receiver_party(addr: &str, args: &Args) -> eyre::Result<()> {
         .map_err(|e| eyre::eyre!("init product sender VOLE failed: {e}"))?;
 
     let mut protocol_rng = StdRng::from_seed(derive_seed(shared_seed, b"receiver-protocol-rng"));
-    let sender_permutation =
-        random_permutation(args.set_size, &mut StdRng::from_seed(derive_seed(shared_seed, b"sender-permutation")));
+    let sender_permutation = random_permutation(
+        args.set_size,
+        &mut StdRng::from_seed(derive_seed(shared_seed, b"sender-permutation")),
+    );
     let shuffler = Shuffler::new(fq(131), fq(149));
-    let sender_run = shuffler.run_full_shuffled_oprf(
-        &sender_permutation,
-        &mut protocol_rng,
-        &mut auth_vole_sender,
-        &mut auth_vole_receiver,
-        &mut product_vole_receiver,
-        &mut channel,
-    )
-    .map_err(|e| eyre::eyre!("receiver shuffler run failed: {e}"))?;
+    let sender_run = shuffler
+        .run_full_shuffled_oprf(
+            &sender_permutation,
+            &mut protocol_rng,
+            &mut auth_vole_sender,
+            &mut auth_vole_receiver,
+            &mut product_vole_receiver,
+            &mut channel,
+        )
+        .map_err(|e| eyre::eyre!("receiver shuffler run failed: {e}"))?;
 
     let inputer = Inputer::new(fq(131), fq(149));
-    let receiver_run = inputer.run_full_shuffled_oprf(
-        &receiver_set,
-        &mut protocol_rng,
-        &mut auth_vole_sender,
-        &mut auth_vole_receiver,
-        &mut product_vole_sender,
-        &mut channel,
-    )
-    .map_err(|e| eyre::eyre!("receiver inputer run failed: {e}"))?;
+    let receiver_run = inputer
+        .run_full_shuffled_oprf(
+            &receiver_set,
+            &mut protocol_rng,
+            &mut auth_vole_sender,
+            &mut auth_vole_receiver,
+            &mut product_vole_sender,
+            &mut channel,
+        )
+        .map_err(|e| eyre::eyre!("receiver inputer run failed: {e}"))?;
 
-    dump_outputs("sender_shuffler_shuffled", &sender_run.shuffled_oprf, args.dump_count);
-    dump_outputs("receiver_inputer_shuffled", &receiver_run.shuffled_oprf, args.dump_count);
+    dump_outputs(
+        "sender_shuffler_shuffled",
+        &sender_run.shuffled_oprf,
+        args.dump_count,
+    );
+    dump_outputs(
+        "receiver_inputer_shuffled",
+        &receiver_run.shuffled_oprf,
+        args.dump_count,
+    );
     println!(
         "receiver local_key_share={} peer_key_share={} total_key={}",
         hex_fe(fq(149)),

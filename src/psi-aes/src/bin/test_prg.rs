@@ -1,14 +1,14 @@
-extern crate psi_aes;
-extern crate lambdaworks_math;
-extern crate rand;
 extern crate aes;
+extern crate lambdaworks_math;
+extern crate psi_aes;
+extern crate rand;
 
-use psi_aes::prg::PRG;
-use lambdaworks_math::field::fields::fft_friendly::stark_252_prime_field::Stark252PrimeField;
-use lambdaworks_math::field::element::FieldElement;
-use std::time::Instant;
+use aes::cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit};
 use aes::Aes128;
-use aes::cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray};
+use lambdaworks_math::field::element::FieldElement;
+use lambdaworks_math::field::fields::fft_friendly::stark_252_prime_field::Stark252PrimeField;
+use psi_aes::prg::PRG;
+use std::time::Instant;
 
 pub type F = Stark252PrimeField;
 pub type FE = FieldElement<F>;
@@ -38,7 +38,6 @@ fn main() {
         "Time to encrypt {} blocks with encrypt_block (sequential): {:?}",
         NUM_BLOCKS, duration_single
     );
-
 
     // Benchmark encrypt_blocks (multiple blocks in parallel)
     let start = Instant::now();

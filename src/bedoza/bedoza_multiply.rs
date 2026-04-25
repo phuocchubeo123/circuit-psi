@@ -31,28 +31,26 @@ pub fn batch_multiply(
     );
     for (i, share) in x_shares.iter().enumerate() {
         ensure!(
-            share.bedoza_sender().side() == side,
+            share.side() == side,
             "x share sender side mismatch at index {}: expected {}, got {}",
             i,
             side,
-            share.bedoza_sender().side()
+            share.side()
         );
     }
     for (i, share) in y_shares.iter().enumerate() {
         ensure!(
-            share.bedoza_sender().side() == side,
+            share.side() == side,
             "y share sender side mismatch at index {}: expected {}, got {}",
             i,
             side,
-            share.bedoza_sender().side()
+            share.side()
         );
     }
     for (i, triple) in triple_shares.iter().enumerate() {
         let (a_share, b_share, c_share) = triple;
         ensure!(
-            a_share.bedoza_sender().side() == side
-                && b_share.bedoza_sender().side() == side
-                && c_share.bedoza_sender().side() == side,
+            a_share.side() == side && b_share.side() == side && c_share.side() == side,
             "triple sender side mismatch at index {}: expected {}",
             i,
             side

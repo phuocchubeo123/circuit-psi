@@ -102,10 +102,15 @@ fn parse_share(fields: &[&str], offset: usize) -> Result<BeDOZa> {
     let receiver_key = hex_to_fe(fields[offset + 4])?;
     let receiver_side = parse_u8_field(fields[offset + 5], "receiver_side")?;
     ensure!(receiver_side <= 1, "receiver_side must be 0 or 1");
+    ensure!(
+        receiver_side != sender_side,
+        "expected sender_side and receiver_side to differ"
+    );
 
     Ok(BeDOZa::new(
-        BeDOZaSender::new(sender_val, sender_pad, sender_side == 1),
-        BeDOZaReceiver::new(receiver_tag, receiver_key, receiver_side == 1),
+        BeDOZaSender::new(sender_val, sender_pad),
+        BeDOZaReceiver::new(receiver_tag, receiver_key),
+        sender_side == 1,
     ))
 }
 
@@ -166,10 +171,10 @@ fn sample_sender_shares<R: Rng>(n: usize, side: bool, rng: &mut R) -> Vec<BeDOZa
         let mut pad_bytes = [0u8; 32];
         rng.fill(&mut value_bytes);
         rng.fill(&mut pad_bytes);
+        let _ = side;
         shares.push(BeDOZaSender::new(
             FE::from_bytes_le_mod_order(&value_bytes),
             FE::from_bytes_le_mod_order(&pad_bytes),
-            side,
         ));
     }
     shares
@@ -198,7 +203,10 @@ fn receive_peer_sender_shares(
     Ok(values
         .into_iter()
         .zip(pads)
-        .map(|(val, pad)| BeDOZaSender::new(val, pad, peer_side))
+        .map(|(val, pad)| {
+            let _ = peer_side;
+            BeDOZaSender::new(val, pad)
+        })
         .collect())
 }
 
@@ -224,6 +232,7 @@ fn build_bedoza_inputs(
     local_senders: &[BeDOZaSender],
     peer_senders: &[BeDOZaSender],
     delta: FE,
+    side: bool,
 ) -> Result<Vec<BeDOZa>> {
     ensure!(
         local_senders.len() == peer_senders.len(),
@@ -238,7 +247,8 @@ fn build_bedoza_inputs(
         .map(|(local, peer)| {
             BeDOZa::new(
                 *local,
-                BeDOZaReceiver::new(delta * peer.val() - peer.pad(), delta, peer.side()),
+                BeDOZaReceiver::new(delta * peer.val() - peer.pad(), delta),
+                side,
             )
         })
         .collect())
@@ -311,8 +321,8 @@ fn run_party(args: &Args) -> Result<()> {
     let peer_x_senders = exchange_sender_shares(&local_x_senders, side, &mut channel)?;
     let peer_y_senders = exchange_sender_shares(&local_y_senders, side, &mut channel)?;
 
-    let x_shares = build_bedoza_inputs(&local_x_senders, &peer_x_senders, delta)?;
-    let y_shares = build_bedoza_inputs(&local_y_senders, &peer_y_senders, delta)?;
+    let x_shares = build_bedoza_inputs(&local_x_senders, &peer_x_senders, delta, side)?;
+    let y_shares = build_bedoza_inputs(&local_y_senders, &peer_y_senders, delta, side)?;
 
     let expected_products: Vec<FE> = local_x_senders
         .iter()

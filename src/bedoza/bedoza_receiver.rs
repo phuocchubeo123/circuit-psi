@@ -10,12 +10,11 @@ use std::ops::{Add, Mul, Sub};
 pub struct BeDOZaReceiver {
     tag: FE, // We have share * key = tag + pad, where share and pad are possessed by the BeDOZaSender
     key: FE,
-    side: bool, // Either 0 or 1. This variable indicate which side's share is this authenticated share. Remember in BeDOZa, both shares of a single value is authenticated.
 }
 
 impl BeDOZaReceiver {
-    pub fn new(tag: FE, key: FE, side: bool) -> Self {
-        Self { tag, key, side }
+    pub fn new(tag: FE, key: FE) -> Self {
+        Self { tag, key }
     }
 
     pub fn tag(&self) -> FE {
@@ -24,10 +23,6 @@ impl BeDOZaReceiver {
 
     pub fn key(&self) -> FE {
         self.key
-    }
-
-    pub fn side(&self) -> bool {
-        self.side
     }
 }
 
@@ -109,17 +104,9 @@ impl Add<&BeDOZaReceiver> for &BeDOZaReceiver {
             self.key(),
             rhs.key()
         );
-        assert_eq!(
-            self.side(),
-            rhs.side(),
-            "Side mismatch in BeDOZa addition: lhs = {:?}, rhs = {:?}",
-            self.side(),
-            rhs.side()
-        );
         BeDOZaReceiver {
             tag: self.tag() + rhs.tag(),
             key: self.key(),
-            side: self.side(),
         }
     }
 }
@@ -135,20 +122,9 @@ impl Add<FE> for &BeDOZaReceiver {
     type Output = BeDOZaReceiver;
 
     fn add(self, constant: FE) -> BeDOZaReceiver {
-        if self.side() {
-            // If side = true, don't do anything to the share
-            BeDOZaReceiver {
-                tag: self.tag(),
-                key: self.key(),
-                side: self.side(),
-            }
-        } else {
-            // If side = false, add the constant to the share
-            BeDOZaReceiver {
-                tag: self.tag() + self.key() * constant,
-                key: self.key(),
-                side: self.side(),
-            }
+        BeDOZaReceiver {
+            tag: self.tag() + self.key() * constant,
+            key: self.key(),
         }
     }
 }
@@ -165,20 +141,9 @@ impl Sub<FE> for &BeDOZaReceiver {
     type Output = BeDOZaReceiver;
 
     fn sub(self, constant: FE) -> BeDOZaReceiver {
-        if self.side() {
-            // If side = true, don't do anything to the share
-            BeDOZaReceiver {
-                tag: self.tag(),
-                key: self.key(),
-                side: self.side(),
-            }
-        } else {
-            // If side = false, subtract the constant from the share
-            BeDOZaReceiver {
-                tag: self.tag() - self.key() * constant,
-                key: self.key(),
-                side: self.side(),
-            }
+        BeDOZaReceiver {
+            tag: self.tag() - self.key() * constant,
+            key: self.key(),
         }
     }
 }
@@ -201,17 +166,9 @@ impl Sub<&BeDOZaReceiver> for &BeDOZaReceiver {
             self.key(),
             rhs.key()
         );
-        assert_eq!(
-            self.side(),
-            rhs.side(),
-            "Side mismatch in BeDOZa subtraction: lhs = {:?}, rhs = {:?}",
-            self.side(),
-            rhs.side()
-        );
         BeDOZaReceiver {
             tag: self.tag() - rhs.tag(),
             key: self.key(),
-            side: self.side(),
         }
     }
 }
@@ -229,7 +186,6 @@ impl Mul<FE> for &BeDOZaReceiver {
         BeDOZaReceiver {
             tag: self.tag() * constant,
             key: self.key(),
-            side: self.side(),
         }
     }
 }

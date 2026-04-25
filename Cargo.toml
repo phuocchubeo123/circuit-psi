@@ -5,8 +5,8 @@ edition = "2024"
 
 [dependencies]
 curve25519-dalek = "4"
-rand_core = "0.10.0"
-rand = "0.10.0"
+rand_core = "0.10.1"
+rand = "0.10.1"
 anyhow = "1.0.102"
 eyre = "0.6.12"
 ff = { git = "https://github.com/GaloisInc/ff", rev = "1a4c6138e2e76e13f8d54fae81857e2cea3cbc4d", features = ["derive"] }
@@ -14,7 +14,7 @@ generic-array = "1.3.5"
 lambdaworks-math = "0.13.0"
 num-traits = "0.2.19"
 rand08 = { package = "rand", version = "0.8.5" }
-rayon = "1.11.0"
+rayon = "1.12.0"
 fourq = "0.1.6"
 crypto-bigint = "0.5.5"
 serde = { version = "1.0.228", features = ["derive"] }
@@ -69,6 +69,14 @@ path = "src/bin/circuit-psi/inspect_shuffled_oprf.rs"
 [[bin]]
 name = "test_psi_sum"
 path = "src/bin/circuit-psi/test_psi_sum.rs"
+
+[[bin]]
+name = "test_one_side_psu"
+path = "src/bin/circuit-psi/test_one_side_psu.rs"
+
+[[bin]]
+name = "test_two_side_psu"
+path = "src/bin/circuit-psi/test_two_side_psu.rs"
 
 [profile.release]
 lto = true

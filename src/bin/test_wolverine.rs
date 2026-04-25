@@ -42,13 +42,13 @@ fn make_batch(delta_1: FE, gates: usize, tamper_one_gate: bool) -> (SenderBatch,
         let pad_b = fq((i as u64) * 13 + 17);
         let pad_c = fq((i as u64) * 19 + 23);
 
-        a_sender.push(BeDOZaSender::new(a, pad_a, false));
-        b_sender.push(BeDOZaSender::new(b, pad_b, false));
-        c_sender.push(BeDOZaSender::new(c, pad_c, false));
+        a_sender.push(BeDOZaSender::new(a, pad_a));
+        b_sender.push(BeDOZaSender::new(b, pad_b));
+        c_sender.push(BeDOZaSender::new(c, pad_c));
 
-        a_receiver.push(BeDOZaReceiver::new(delta_1 * a - pad_a, delta_1, false));
-        b_receiver.push(BeDOZaReceiver::new(delta_1 * b - pad_b, delta_1, false));
-        c_receiver.push(BeDOZaReceiver::new(delta_1 * c - pad_c, delta_1, false));
+        a_receiver.push(BeDOZaReceiver::new(delta_1 * a - pad_a, delta_1));
+        b_receiver.push(BeDOZaReceiver::new(delta_1 * b - pad_b, delta_1));
+        c_receiver.push(BeDOZaReceiver::new(delta_1 * c - pad_c, delta_1));
     }
 
     (
