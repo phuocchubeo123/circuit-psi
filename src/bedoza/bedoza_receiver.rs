@@ -1,7 +1,13 @@
-use crate::{bedoza::comm_util::receive_fe_vec, math::defines::FE, tcp_channel::SwankyChannel};
+use crate::{
+    bedoza::comm_util::receive_fe_vec, 
+    math::defines::{FE, random_fe_vec_from_rng},
+    tcp_channel::SwankyChannel
+
+};
 use anyhow::{Result, anyhow, ensure};
 
 use std::ops::{Add, Mul, Sub};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 // We assume that the offline phase is already done
 // https://eprint.iacr.org/2010/514.pdf
@@ -43,32 +49,27 @@ pub fn receive_open_shares(
 
     // Receive values and pads from BeDOZaSender
     let values = receive_fe_vec(channel).map_err(|e| anyhow!("Failed to receive values: {}", e))?;
-    let pads = receive_fe_vec(channel).map_err(|e| anyhow!("Failed to receive pads: {}", e))?;
 
-    ensure!(
-        values.len() == pads.len(),
-        "Length mismatch between values and pads received: lhs = {}, rhs = {}",
-        values.len(),
-        pads.len()
-    );
+    let mut rng = rand::rng();
+    let seed: [u8; 32] = rng.random();
+    channel.send(&seed)?;
 
-    // Compute the received tags and compare them with the tags that I have
-    let received_tags: Vec<FE> = values
-        .iter()
-        .zip(pads.iter())
-        .map(|(value, pad)| key * value - pad)
-        .collect();
-    for (i, (&received_tag, bedoza_receiver)) in received_tags
-        .iter()
-        .zip(bedoza_receivers.iter())
-        .enumerate()
-    {
-        ensure!(
-            received_tag == bedoza_receiver.tag(),
-            "Tag mismatch at bedoza_receiver index {}",
-            i
-        );
+    let mut seeded_rng = StdRng::from_seed(seed);
+    let coeffs = random_fe_vec_from_rng(&mut seeded_rng, bedoza_receivers.len() + 1)?;
+    let mut acc_val = coeffs[0];
+    let mut acc_tag = coeffs[0];
+    for (coeff, (value, bedoza_receiver)) in coeffs[1..].iter().zip((values.iter().zip(bedoza_receivers.iter()))) {
+        acc_val += coeff * value;
+        acc_tag += coeff * bedoza_receiver.tag();
     }
+
+    let acc_pad = receive_fe_vec(channel).map_err(|e| anyhow!("Failed to receive pads: {}", e))?[0];
+
+    // Consistency check 
+    ensure!(
+        acc_tag + acc_pad == key * acc_val,
+        "Tag mismatch for bedoza opening"
+    );
 
     Ok(values)
 }

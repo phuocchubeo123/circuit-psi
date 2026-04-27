@@ -311,8 +311,6 @@ fn run_party(args: &Args) -> Result<()> {
         Side::Sender => listen_to(&addr).map_err(|e| anyhow!("{e}"))?,
         Side::Receiver => connect_with_retry(&addr).map_err(|e| anyhow!("{e}"))?,
     };
-    let start = Instant::now();
-
     let side = side_flag(args.side);
     let mut rng = rand::rng();
     let local_x_senders = sample_sender_shares(args.n, side, &mut rng);
@@ -335,11 +333,13 @@ fn run_party(args: &Args) -> Result<()> {
         })
         .collect();
 
+    let start = Instant::now();
     let current_bytes_sent = channel.bytes_sent();
     let current_bytes_received = channel.bytes_received();
 
     let outputs = batch_multiply(&x_shares, &y_shares, triples, side, &mut channel)?;
 
+    let multiply_time = start.elapsed().as_millis();
     let multiply_bytes_sent = channel.bytes_sent() - current_bytes_sent;
     let multiply_bytes_received = channel.bytes_received() - current_bytes_received;
 
@@ -350,7 +350,7 @@ fn run_party(args: &Args) -> Result<()> {
         args.side,
         addr,
         args.n,
-        start.elapsed().as_millis(),
+        multiply_time,
         multiply_bytes_sent,
         multiply_bytes_received,
     );

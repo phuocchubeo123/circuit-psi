@@ -17,6 +17,7 @@ pub fn batch_multiply(
     side: bool,
     channel: &mut SwankyChannel,
 ) -> Result<Vec<BeDOZa>> {
+    // Various Length Asserts
     ensure!(
         x_shares.len() == y_shares.len(),
         "Length mismatch between x_shares and y_shares: lhs = {}, rhs = {}",
@@ -57,6 +58,8 @@ pub fn batch_multiply(
         );
     }
 
+    let start = std::time::Instant::now();
+
     // First compute d = x - a and e = y - b
     let d_shares: Vec<BeDOZa> = x_shares
         .iter()
@@ -67,6 +70,8 @@ pub fn batch_multiply(
         })
         .collect();
 
+    println!("Time elapsed: {:?}", start.elapsed());
+
     let e_shares: Vec<BeDOZa> = y_shares
         .iter()
         .zip(triple_shares.iter())
@@ -75,6 +80,8 @@ pub fn batch_multiply(
             y_share - b_share
         })
         .collect();
+
+    println!("Time elapsed: {:?}", start.elapsed());
 
     // Now open d and e to both parties. The two roles use opposite I/O order to avoid both
     // sides blocking on the same receive call.
@@ -87,6 +94,8 @@ pub fn batch_multiply(
         .map(|share| *share.bedoza_receiver())
         .collect();
 
+    println!("Time elapsed: {:?}", start.elapsed());
+
     let e_senders: Vec<BeDOZaSender> = e_shares
         .iter()
         .map(|share| *share.bedoza_sender())
@@ -96,16 +105,26 @@ pub fn batch_multiply(
         .map(|share| *share.bedoza_receiver())
         .collect();
 
+    println!("Time elapsed: {:?}", start.elapsed());
+
     let (d_receiver_values, e_receiver_values) = if !side {
+        println!("Channel bytes sent until this point: {}", channel.bytes_sent());
+        println!("Time elapsed: {:?}", start.elapsed());
         send_open_shares(&d_senders, channel)
             .map_err(|e| anyhow!("Failed to send open d shares: {}", e))?;
+        println!("Channel bytes sent until this point: {}", channel.bytes_sent());
+        println!("Time elapsed: {:?}", start.elapsed());
         send_open_shares(&e_senders, channel)
             .map_err(|e| anyhow!("Failed to send open e shares: {}", e))?;
+        println!("Channel bytes sent until this point: {}", channel.bytes_sent());
+        println!("Time elapsed: {:?}", start.elapsed());
 
         let d_values = receive_open_shares(&d_receivers, channel)
             .map_err(|e| anyhow!("Failed to receive open d shares: {}", e))?;
+        println!("Time elapsed: {:?}", start.elapsed());
         let e_values = receive_open_shares(&e_receivers, channel)
             .map_err(|e| anyhow!("Failed to receive open e shares: {}", e))?;
+        println!("Time elapsed: {:?}", start.elapsed());
         (d_values, e_values)
     } else {
         let d_values = receive_open_shares(&d_receivers, channel)
@@ -113,10 +132,16 @@ pub fn batch_multiply(
         let e_values = receive_open_shares(&e_receivers, channel)
             .map_err(|e| anyhow!("Failed to receive open e shares: {}", e))?;
 
+        println!("Channel bytes sent until this point: {}", channel.bytes_sent());
+        println!("Time elapsed: {:?}", start.elapsed());
         send_open_shares(&d_senders, channel)
             .map_err(|e| anyhow!("Failed to send open d shares: {}", e))?;
+        println!("Channel bytes sent until this point: {}", channel.bytes_sent());
+        println!("Time elapsed: {:?}", start.elapsed());
         send_open_shares(&e_senders, channel)
             .map_err(|e| anyhow!("Failed to send open e shares: {}", e))?;
+        println!("Channel bytes sent until this point: {}", channel.bytes_sent());
+        println!("Time elapsed: {:?}", start.elapsed());
         (d_values, e_values)
     };
 
