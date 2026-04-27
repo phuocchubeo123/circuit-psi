@@ -548,14 +548,15 @@ impl Shuffler {
             .map_err(|e| anyhow!("step6 failed to send shuffled OPRF points: {}", e))?;
 
         // 6.2) Open left product and its pad proof.
-        let x_powers = powers(x, authenticated_inverse_sender.len());
-        let scaled_inverse_sender: Vec<BeDOZaSender> = authenticated_inverse_sender
-            .iter()
-            .zip(x_powers.iter())
-            .map(|(z_i, &x_i)| *z_i * x_i)
-            .collect();
-        let scaled_values: Vec<FE> = scaled_inverse_sender.iter().map(|s| s.val()).collect();
-        let scaled_pads: Vec<FE> = scaled_inverse_sender.iter().map(|s| s.pad()).collect();
+        // Build scaled values/pads directly to avoid materializing BeDOZaSender and x^i vectors.
+        let mut scaled_values = Vec::with_capacity(authenticated_inverse_sender.len());
+        let mut scaled_pads = Vec::with_capacity(authenticated_inverse_sender.len());
+        let mut x_power = FE::one();
+        for share in authenticated_inverse_sender {
+            scaled_values.push(share.val() * x_power);
+            scaled_pads.push(share.pad() * x_power);
+            x_power *= x;
+        }
         let opened_left_product = msm_pippenger(g_ri, &scaled_values)
             .map_err(|e| anyhow!("step6 failed MSM for opened left product: {}", e))?;
         let left_pad_product = msm_pippenger(g_ri, &scaled_pads)
@@ -564,14 +565,12 @@ impl Shuffler {
             .map_err(|e| anyhow!("step6 failed to send left product proof elements: {}", e))?;
 
         // 6.3) Open right product and its pad proof.
-        let x_pi_values: Vec<FE> = authenticated_x_powers_sender
-            .iter()
-            .map(|s| s.val())
-            .collect();
-        let x_pi_pads: Vec<FE> = authenticated_x_powers_sender
-            .iter()
-            .map(|s| s.pad())
-            .collect();
+        let mut x_pi_values = Vec::with_capacity(authenticated_x_powers_sender.len());
+        let mut x_pi_pads = Vec::with_capacity(authenticated_x_powers_sender.len());
+        for share in authenticated_x_powers_sender {
+            x_pi_values.push(share.val());
+            x_pi_pads.push(share.pad());
+        }
         let opened_right_product = msm_pippenger(&shuffled_oprf, &x_pi_values)
             .map_err(|e| anyhow!("step6 failed MSM for opened right product: {}", e))?;
         let right_pad_product = msm_pippenger(&shuffled_oprf, &x_pi_pads)

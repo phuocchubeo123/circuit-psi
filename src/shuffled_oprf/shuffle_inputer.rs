@@ -433,35 +433,44 @@ impl Inputer {
 
         // Precompute both tag/MSM products before reading the proof batches so the peer can keep
         // writing while we spend time on local multi-scalar multiplications.
-        let xi_times_inverse_tags: Vec<FE> = authenticated_xi_times_inverse
-            .iter()
-            .map(|bedoza_receiver| bedoza_receiver.tag())
-            .collect();
+        let mut tag_scratch = Vec::with_capacity(authenticated_xi_times_inverse.len());
+        tag_scratch.extend(
+            authenticated_xi_times_inverse
+                .iter()
+                .map(|bedoza_receiver| bedoza_receiver.tag()),
+        );
         let g_xi_times_inverse_tag_product =
-            msm_pippenger(g_ri, &xi_times_inverse_tags).map_err(|e| {
+            msm_pippenger(g_ri, &tag_scratch).map_err(|e| {
                 anyhow!("Failed to get multi-exponentiation for g_xi_times_inverse tags: {e}")
             })?;
 
-        let shuffled_x_powers_tags: Vec<FE> = authenticated_permuted_x_powers
-            .iter()
-            .map(|bedoza_receiver| bedoza_receiver.tag())
-            .collect();
+        tag_scratch.clear();
+        tag_scratch.extend(
+            authenticated_permuted_x_powers
+                .iter()
+                .map(|bedoza_receiver| bedoza_receiver.tag()),
+        );
         let shuffled_oprf_x_powers_tag_product =
-            msm_pippenger(&shuffled_oprf, &shuffled_x_powers_tags).map_err(|e| {
+            msm_pippenger(&shuffled_oprf, &tag_scratch).map_err(|e| {
                 anyhow!("Failed to get multi-exponentiation for shuffled_oprf^x_powers tags: {e}")
             })?;
 
         // 1) Receive and verify the left hand side
         // Shuffler sends [opened_left_product, pad_product] in one batch.
-        let mut left_proof_elems = receive_group_elements(channel)
+        let left_proof_elems = receive_group_elements(channel)
             .map_err(|e| anyhow!("Failed to receive left proof group elements: {e}"))?;
         ensure!(
             left_proof_elems.len() == 2,
             "step6 expected 2 left proof elements, got {}",
             left_proof_elems.len()
         );
-        let g_xi_times_inverse_product = left_proof_elems.swap_remove(0);
-        let g_xi_times_inverse_pad_product = left_proof_elems.swap_remove(0);
+        let mut left_iter = left_proof_elems.into_iter();
+        let g_xi_times_inverse_product = left_iter
+            .next()
+            .ok_or_else(|| anyhow!("step6 missing left opened product"))?;
+        let g_xi_times_inverse_pad_product = left_iter
+            .next()
+            .ok_or_else(|| anyhow!("step6 missing left pad product"))?;
 
         let lhs = g_xi_times_inverse_pad_product + g_xi_times_inverse_tag_product;
         let rhs = g_xi_times_inverse_product.scalar_mul(&authenticated_xi_times_inverse[0].key());
@@ -474,15 +483,20 @@ impl Inputer {
         // 2) Receive and verify the right hand side, which is product of
         // (g^{1 / (x_pi(i) + k)})^{committed x^pi(i)}.
         // Shuffler sends [opened_right_product, right_pad_product] in one batch.
-        let mut right_proof_elems = receive_group_elements(channel)
+        let right_proof_elems = receive_group_elements(channel)
             .map_err(|e| anyhow!("Failed to receive right proof group elements: {e}"))?;
         ensure!(
             right_proof_elems.len() == 2,
             "step6 expected 2 right proof elements, got {}",
             right_proof_elems.len()
         );
-        let shuffled_oprf_x_powers_product = right_proof_elems.swap_remove(0);
-        let shuffled_oprf_x_powers_pad_product = right_proof_elems.swap_remove(0);
+        let mut right_iter = right_proof_elems.into_iter();
+        let shuffled_oprf_x_powers_product = right_iter
+            .next()
+            .ok_or_else(|| anyhow!("step6 missing right opened product"))?;
+        let shuffled_oprf_x_powers_pad_product = right_iter
+            .next()
+            .ok_or_else(|| anyhow!("step6 missing right pad product"))?;
 
         let lhs = shuffled_oprf_x_powers_pad_product + shuffled_oprf_x_powers_tag_product;
         let rhs =
