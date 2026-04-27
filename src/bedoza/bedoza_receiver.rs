@@ -37,7 +37,34 @@ pub fn receive_open_shares(
     bedoza_receivers: &[BeDOZaReceiver],
     channel: &mut SwankyChannel,
 ) -> Result<Vec<FE>> {
-    // First check whether keys of every BeDOZaReceiver are the same (since they come from the same person)
+    // Always consume the open protocol messages before performing validation checks.
+    // This avoids leaving the sender blocked waiting for our seed on error paths.
+    let values = receive_fe_vec(channel).map_err(|e| anyhow!("Failed to receive values: {}", e))?;
+
+    let mut rng = rand::rng();
+    let seed: [u8; 32] = rng.random();
+    channel.send(&seed)?;
+
+    let received_pads = receive_fe_vec(channel).map_err(|e| anyhow!("Failed to receive pads: {}", e))?;
+    ensure!(
+        received_pads.len() == 1,
+        "Expected exactly one pad accumulator, got {}",
+        received_pads.len()
+    );
+    let acc_pad = received_pads[0];
+
+    ensure!(
+        !bedoza_receivers.is_empty(),
+        "Cannot open an empty list of BeDOZaReceiver shares"
+    );
+    ensure!(
+        values.len() == bedoza_receivers.len(),
+        "Length mismatch for opening shares: values={} receivers={}",
+        values.len(),
+        bedoza_receivers.len()
+    );
+
+    // Check whether keys of every BeDOZaReceiver are the same
     let key = bedoza_receivers[0].key();
     for (i, bedoza_receiver) in bedoza_receivers.iter().enumerate() {
         ensure!(
@@ -47,23 +74,17 @@ pub fn receive_open_shares(
         );
     }
 
-    // Receive values and pads from BeDOZaSender
-    let values = receive_fe_vec(channel).map_err(|e| anyhow!("Failed to receive values: {}", e))?;
-
-    let mut rng = rand::rng();
-    let seed: [u8; 32] = rng.random();
-    channel.send(&seed)?;
-
     let mut seeded_rng = StdRng::from_seed(seed);
-    let coeffs = random_fe_vec_from_rng(&mut seeded_rng, bedoza_receivers.len() + 1)?;
-    let mut acc_val = coeffs[0];
-    let mut acc_tag = coeffs[0];
-    for (coeff, (value, bedoza_receiver)) in coeffs[1..].iter().zip((values.iter().zip(bedoza_receivers.iter()))) {
+    let coeffs = random_fe_vec_from_rng(&mut seeded_rng, bedoza_receivers.len())?;
+    let mut acc_val = FE::zero();
+    let mut acc_tag = FE::zero();
+    for (coeff, (value, bedoza_receiver)) in coeffs
+        .iter()
+        .zip(values.iter().zip(bedoza_receivers.iter()))
+    {
         acc_val += coeff * value;
         acc_tag += coeff * bedoza_receiver.tag();
     }
-
-    let acc_pad = receive_fe_vec(channel).map_err(|e| anyhow!("Failed to receive pads: {}", e))?[0];
 
     // Consistency check 
     ensure!(

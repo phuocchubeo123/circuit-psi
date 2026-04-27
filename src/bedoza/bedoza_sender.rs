@@ -44,13 +44,18 @@ pub fn send_open_shares(
         .collect();
 
     let seed_bytes = channel.receive()?;
+    ensure!(
+        seed_bytes.len() == 32,
+        "Expected 32-byte seed from receiver, got {} bytes",
+        seed_bytes.len()
+    );
     let mut seed = [0u8; 32];
     seed.copy_from_slice(&seed_bytes);
     let mut seeded_rng = StdRng::from_seed(seed);
-    let coeffs = random_fe_vec_from_rng(&mut seeded_rng, bedoza_senders.len() + 1)?;
-    let mut acc_pad = coeffs[0];
+    let coeffs = random_fe_vec_from_rng(&mut seeded_rng, bedoza_senders.len())?;
+    let mut acc_pad = FE::zero();
 
-    for (coeff, pad) in coeffs[1..].iter().zip(pads.iter()) {
+    for (coeff, pad) in coeffs.iter().zip(pads.iter()) {
         acc_pad += coeff * pad;
     }
 

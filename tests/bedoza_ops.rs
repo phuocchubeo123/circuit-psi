@@ -7,12 +7,6 @@ fn fe(n: u8) -> FE {
     FE::from(n as u64)
 }
 
-fn make_authenticated_share(value: FE, pad: FE, key: FE, side: bool) -> BeDOZa {
-    let sender = BeDOZaSender::new(value, pad);
-    let receiver = BeDOZaReceiver::new(key * value - pad, key);
-    BeDOZa::new(sender, receiver, side)
-}
-
 fn make_secret_shares(
     secret: FE,
     left_value: FE,
@@ -22,8 +16,16 @@ fn make_secret_shares(
     right_key: FE,
 ) -> (BeDOZa, BeDOZa) {
     let right_value = secret - left_value;
-    let left = make_authenticated_share(left_value, left_pad, left_key, false);
-    let right = make_authenticated_share(right_value, right_pad, right_key, true);
+    let left = BeDOZa::new(
+        BeDOZaSender::new(left_value, left_pad),
+        BeDOZaReceiver::new(left_key * right_value - right_pad, left_key),
+        false,
+    );
+    let right = BeDOZa::new(
+        BeDOZaSender::new(right_value, right_pad),
+        BeDOZaReceiver::new(right_key * left_value - left_pad, right_key),
+        true,
+    );
     (left, right)
 }
 
@@ -31,10 +33,10 @@ fn reconstruct_value(left: &BeDOZa, right: &BeDOZa) -> FE {
     left.bedoza_sender().val() + right.bedoza_sender().val()
 }
 
-fn assert_tag_checks(share: &BeDOZa) {
-    let expected_tag =
-        share.bedoza_receiver().key() * share.bedoza_sender().val() - share.bedoza_sender().pad();
-    assert_eq!(share.bedoza_receiver().tag(), expected_tag);
+fn assert_cross_tag_checks(local: &BeDOZa, remote: &BeDOZa) {
+    let expected_tag = local.bedoza_receiver().key() * remote.bedoza_sender().val()
+        - remote.bedoza_sender().pad();
+    assert_eq!(local.bedoza_receiver().tag(), expected_tag);
 }
 
 #[test]
@@ -52,8 +54,8 @@ fn bedoza_add_preserves_value_and_tags() {
     let z_right = &x_right + &y_right;
 
     assert_eq!(reconstruct_value(&z_left, &z_right), x_secret + y_secret);
-    assert_tag_checks(&z_left);
-    assert_tag_checks(&z_right);
+    assert_cross_tag_checks(&z_left, &z_right);
+    assert_cross_tag_checks(&z_right, &z_left);
 }
 
 #[test]
@@ -71,8 +73,8 @@ fn bedoza_sub_preserves_value_and_tags() {
     let z_right = &x_right - &y_right;
 
     assert_eq!(reconstruct_value(&z_left, &z_right), x_secret - y_secret);
-    assert_tag_checks(&z_left);
-    assert_tag_checks(&z_right);
+    assert_cross_tag_checks(&z_left, &z_right);
+    assert_cross_tag_checks(&z_right, &z_left);
 }
 
 #[test]
@@ -89,8 +91,8 @@ fn bedoza_mul_constant_preserves_value_and_tags() {
     let z_right = &x_right * constant;
 
     assert_eq!(reconstruct_value(&z_left, &z_right), x_secret * constant);
-    assert_tag_checks(&z_left);
-    assert_tag_checks(&z_right);
+    assert_cross_tag_checks(&z_left, &z_right);
+    assert_cross_tag_checks(&z_right, &z_left);
 }
 
 #[test]
@@ -107,8 +109,8 @@ fn bedoza_add_constant_preserves_value_and_tags() {
     let z_right = &x_right + constant;
 
     assert_eq!(reconstruct_value(&z_left, &z_right), x_secret + constant);
-    assert_tag_checks(&z_left);
-    assert_tag_checks(&z_right);
+    assert_cross_tag_checks(&z_left, &z_right);
+    assert_cross_tag_checks(&z_right, &z_left);
 }
 
 #[test]
@@ -125,8 +127,8 @@ fn bedoza_sub_constant_preserves_value_and_tags() {
     let z_right = &x_right - constant;
 
     assert_eq!(reconstruct_value(&z_left, &z_right), x_secret - constant);
-    assert_tag_checks(&z_left);
-    assert_tag_checks(&z_right);
+    assert_cross_tag_checks(&z_left, &z_right);
+    assert_cross_tag_checks(&z_right, &z_left);
 }
 
 #[test]
@@ -143,6 +145,6 @@ fn bedoza_mul_fe_owned_preserves_value_and_tags() {
     let z_right = x_right * constant;
 
     assert_eq!(reconstruct_value(&z_left, &z_right), x_secret * constant);
-    assert_tag_checks(&z_left);
-    assert_tag_checks(&z_right);
+    assert_cross_tag_checks(&z_left, &z_right);
+    assert_cross_tag_checks(&z_right, &z_left);
 }
