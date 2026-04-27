@@ -6,7 +6,6 @@ use circuit_psi::{
 };
 use clap::{Parser, ValueEnum};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
-use sha2::{Digest, Sha256};
 use std::{collections::HashSet, time::Instant};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -43,14 +42,10 @@ fn socket_addr(args: &Args) -> String {
     format!("{}:{}", args.addr, args.port)
 }
 
-fn derive_seed(shared_seed: [u8; 32], label: &[u8]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(shared_seed);
-    hasher.update(label);
-    let digest = hasher.finalize();
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&digest);
-    out
+fn sample_local_protocol_rng(rng: &mut impl rand::Rng) -> StdRng {
+    let mut protocol_seed = [0u8; 32];
+    rng.fill(&mut protocol_seed);
+    StdRng::from_seed(protocol_seed)
 }
 
 fn cardinality(values_a: &[FE], values_b: &[FE]) -> usize {
@@ -61,7 +56,6 @@ fn cardinality(values_a: &[FE], values_b: &[FE]) -> usize {
 
 fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     let mut channel = listen_to(addr).map_err(|e| eyre::eyre!("{e}"))?;
-    let start = Instant::now();
 
     let mut seed_rng = rand::rng();
     let mut shared_seed = [0u8; 32];
@@ -80,9 +74,14 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
         args.intersection_size
     );
 
+    // Count only PSI-cardinality protocol work (init/run), excluding setup.
+    let start = Instant::now();
+    let bytes_sent_before = channel.bytes_sent();
+    let bytes_received_before = channel.bytes_received();
+
     let mut psi = PsiCardinalitySender::new(fq(97), fq(173), &mut channel)
         .map_err(|e| eyre::eyre!("sender failed to initialize PSI cardinality: {e}"))?;
-    let mut protocol_rng = StdRng::from_seed(derive_seed(shared_seed, b"sender-protocol-rng"));
+    let mut protocol_rng = sample_local_protocol_rng(&mut seed_rng);
     let got = psi
         .run(&sender_set, &mut protocol_rng, &mut channel)
         .map_err(|e| eyre::eyre!("sender failed to run PSI cardinality: {e}"))?;
@@ -96,15 +95,15 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     Ok(PartyRun {
         side: Side::Sender,
         cardinality: got,
-        bytes_sent: channel.bytes_sent(),
-        bytes_received: channel.bytes_received(),
+        bytes_sent: channel.bytes_sent().saturating_sub(bytes_sent_before),
+        bytes_received: channel.bytes_received().saturating_sub(bytes_received_before),
         elapsed_ms: start.elapsed().as_millis(),
     })
 }
 
 fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     let mut channel = connect_with_retry(addr).map_err(|e| eyre::eyre!("{e}"))?;
-    let start = Instant::now();
+    let mut local_rng = rand::rng();
 
     let shared_seed_bytes = channel
         .receive()
@@ -127,9 +126,14 @@ fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
         args.intersection_size
     );
 
+    // Count only PSI-cardinality protocol work (init/run), excluding setup.
+    let start = Instant::now();
+    let bytes_sent_before = channel.bytes_sent();
+    let bytes_received_before = channel.bytes_received();
+
     let mut psi = PsiCardinalityReceiver::new(fq(131), fq(149), &mut channel)
         .map_err(|e| eyre::eyre!("receiver failed to initialize PSI cardinality: {e}"))?;
-    let mut protocol_rng = StdRng::from_seed(derive_seed(shared_seed, b"receiver-protocol-rng"));
+    let mut protocol_rng = sample_local_protocol_rng(&mut local_rng);
     let got = psi
         .run(&receiver_set, &mut protocol_rng, &mut channel)
         .map_err(|e| eyre::eyre!("receiver failed to run PSI cardinality: {e}"))?;
@@ -143,8 +147,8 @@ fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     Ok(PartyRun {
         side: Side::Receiver,
         cardinality: got,
-        bytes_sent: channel.bytes_sent(),
-        bytes_received: channel.bytes_received(),
+        bytes_sent: channel.bytes_sent().saturating_sub(bytes_sent_before),
+        bytes_received: channel.bytes_received().saturating_sub(bytes_received_before),
         elapsed_ms: start.elapsed().as_millis(),
     })
 }

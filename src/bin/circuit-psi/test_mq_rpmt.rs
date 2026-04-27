@@ -1,7 +1,7 @@
 use circuit_psi::{
+    bedoza::comm_util::{receive_fe_vec, send_fe_vec},
     circuit_psi::mq_rpmt::{
-        MqRpmtReceiver, MqRpmtSender, open_authenticated_shuffled_bitmap_receive,
-        open_authenticated_shuffled_bitmap_send,
+        MqRpmtReceiver, MqRpmtSender,
     },
     math::{defines::FE, scalar_field::fq},
     tcp_channel::{connect_with_retry, listen_to},
@@ -81,14 +81,11 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     let elapsed_ms = start.elapsed().as_millis();
 
 
-    let opened_bitmap = open_authenticated_shuffled_bitmap_receive(
-        &output.authenticated_shuffled_bitmap,
-        &mut channel,
-    )
-    .map_err(|e| eyre::eyre!("sender failed to receive bitmap opening: {e}"))?;
+    let opened_bitmap = receive_fe_vec(&mut channel)
+        .map_err(|e| eyre::eyre!("sender failed to receive shuffled bitmap: {e}"))?;
     eyre::ensure!(
         opened_bitmap == output.shuffled_bitmap,
-        "sender opened shuffled bitmap mismatch: got {:?}, expected {:?}",
+        "sender shuffled bitmap mismatch: got {:?}, expected {:?}",
         opened_bitmap,
         output.shuffled_bitmap
     );
@@ -130,8 +127,8 @@ fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     let bytes_received = channel.bytes_received();
     let elapsed_ms = start.elapsed().as_millis();
 
-    open_authenticated_shuffled_bitmap_send(&output.authenticated_shuffled_bitmap, &mut channel)
-        .map_err(|e| eyre::eyre!("receiver failed to send bitmap opening: {e}"))?;
+    send_fe_vec(&output.shuffled_bitmap, &mut channel)
+        .map_err(|e| eyre::eyre!("receiver failed to send shuffled bitmap: {e}"))?;
     eyre::ensure!(
         output.shuffled_bitmap.len() == args.set_size,
         "receiver shuffled bitmap length {} does not match set size {}",

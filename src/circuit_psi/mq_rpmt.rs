@@ -285,7 +285,6 @@ pub struct MqRpmtSender {
 pub struct MqRpmtSenderOutput {
     pub authenticated_original_bitmap: Vec<BeDOZaReceiver>,
     pub shuffled_bitmap: Vec<FE>,
-    pub authenticated_shuffled_bitmap: Vec<BeDOZaReceiver>,
 }
 
 impl MqRpmtSender {
@@ -354,11 +353,6 @@ impl MqRpmtSender {
             .auth_vole_receiver
             .commit_auth(channel, sender_set.len())
             .map_err(|e| anyhow!("failed to receive authenticated original bitmap: {e}"))?;
-        let authenticated_shuffled_bitmap = self
-            .auth_vole_receiver
-            .commit_auth(channel, sender_set.len())
-            .map_err(|e| anyhow!("failed to receive authenticated shuffled bitmap: {e}"))?;
-
         verify_bitmap_shuffle(
             &proof_original_bitmap,
             &sender_oprf.authenticated_permutation,
@@ -371,10 +365,6 @@ impl MqRpmtSender {
         Ok(MqRpmtSenderOutput {
             authenticated_original_bitmap: relabel_receiver_shares(&proof_original_bitmap, true),
             shuffled_bitmap,
-            authenticated_shuffled_bitmap: relabel_receiver_shares(
-                &authenticated_shuffled_bitmap,
-                true,
-            ),
         })
     }
 }
@@ -392,7 +382,6 @@ pub struct MqRpmtReceiverOutput {
     pub original_bitmap: Vec<FE>,
     pub authenticated_original_bitmap: Vec<BeDOZaSender>,
     pub shuffled_bitmap: Vec<FE>,
-    pub authenticated_shuffled_bitmap: Vec<BeDOZaSender>,
 }
 
 impl MqRpmtReceiver {
@@ -462,11 +451,6 @@ impl MqRpmtReceiver {
             .auth_vole_sender
             .commit_auth(channel, &original_bitmap)
             .map_err(|e| anyhow!("failed to authenticate original bitmap for proof: {e}"))?;
-        let authenticated_shuffled_bitmap = self
-            .auth_vole_sender
-            .commit_auth(channel, &shuffled_bitmap)
-            .map_err(|e| anyhow!("failed to authenticate shuffled bitmap: {e}"))?;
-
         prove_bitmap_shuffle(
             &proof_original_bitmap,
             &sender_oprf.authenticated_permutation,
@@ -479,30 +463,8 @@ impl MqRpmtReceiver {
             original_bitmap,
             authenticated_original_bitmap: relabel_sender_shares(&proof_original_bitmap, true),
             shuffled_bitmap,
-            authenticated_shuffled_bitmap: relabel_sender_shares(
-                &authenticated_shuffled_bitmap,
-                true,
-            ),
         })
     }
-}
-
-// for debug only
-pub fn open_authenticated_shuffled_bitmap_send(
-    authenticated_bitmap: &[BeDOZaSender],
-    channel: &mut SwankyChannel,
-) -> Result<()> {
-    send_open_shares(authenticated_bitmap, channel)
-        .map_err(|e| anyhow!("failed to send authenticated shuffled bitmap opening: {e}"))
-}
-
-// for debug only
-pub fn open_authenticated_shuffled_bitmap_receive(
-    authenticated_bitmap: &[BeDOZaReceiver],
-    channel: &mut SwankyChannel,
-) -> Result<Vec<FE>> {
-    receive_open_shares(authenticated_bitmap, channel)
-        .map_err(|e| anyhow!("failed to receive authenticated shuffled bitmap opening: {e}"))
 }
 
 fn exchange_set_size(local_len: usize, channel: &mut SwankyChannel) -> Result<usize> {
