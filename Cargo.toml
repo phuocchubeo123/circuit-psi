@@ -94,5 +94,9 @@ path = "src/bin/field-bench/bench_lambdaworks_fourq_mul.rs"
 name = "bench_fe_sampling_strategies"
 path = "src/bin/tools-bench/bench_fe_sampling_strategies.rs"
 
+[[bin]]
+name = "test_buffered_vole_wrapper"
+path = "src/bin/tools-bench/test_buffered_vole_wrapper.rs"
+
 [profile.release]
 lto = true
