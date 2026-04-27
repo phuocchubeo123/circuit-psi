@@ -80,14 +80,15 @@ fn main() -> Result<()> {
 
     let sender_socket = args.network.socket_addr();
     println!("role=inputer_steps n={} sender={}", args.n, sender_socket);
-    let total_start = Instant::now();
-
     let delta_0 = fq(97);
     let inputer_vole_key = fq(173);
 
     let mut channel = timed_local("connect_swanky", || {
         connect_with_retry(&sender_socket).context("connect swanky channel")
     })?;
+
+    let total_start = Instant::now();
+
 
     let mut auth_vole_sender = timed_channel("init_auth_vole_sender", &mut channel, |channel| {
         BufferedVoleSender::init(channel, LPN21)

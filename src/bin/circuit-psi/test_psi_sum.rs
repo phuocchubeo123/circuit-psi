@@ -7,7 +7,6 @@ use circuit_psi::{
 };
 use clap::{Parser, ValueEnum};
 use rand::{rngs::StdRng, RngExt, SeedableRng};
-use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
     fs,
@@ -38,8 +37,6 @@ struct Args {
     triples_csv: PathBuf,
     #[arg(long)]
     delta_txt: PathBuf,
-    #[arg(long)]
-    key_txt: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -55,14 +52,16 @@ fn socket_addr(args: &Args) -> String {
     format!("{}:{}", args.addr, args.port)
 }
 
-fn derive_seed(shared_seed: [u8; 32], label: &[u8]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(shared_seed);
-    hasher.update(label);
-    let digest = hasher.finalize();
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&digest);
-    out
+fn sample_local_key(rng: &mut impl rand::Rng) -> FE {
+    let mut key_seed = [0u8; 32];
+    rng.fill(&mut key_seed);
+    FE::from_bytes_le_mod_order(&key_seed)
+}
+
+fn sample_local_protocol_rng(rng: &mut impl rand::Rng) -> StdRng {
+    let mut protocol_seed = [0u8; 32];
+    rng.fill(&mut protocol_seed);
+    StdRng::from_seed(protocol_seed)
 }
 
 fn fe_to_hex(value: FE) -> String {
@@ -189,8 +188,6 @@ fn expected_psi_sum(sender_set: &[FE], receiver_set: &[FE]) -> FE {
 
 fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     let mut channel = listen_to(addr).map_err(|e| eyre::eyre!("{e}"))?;
-    let start = Instant::now();
-
     let mut seed_rng = rand::rng();
     let mut shared_seed = [0u8; 32];
     seed_rng.fill(&mut shared_seed);
@@ -203,7 +200,7 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     let expected = expected_psi_sum(&sender_set, &receiver_set);
 
     let delta = read_fe_txt(&args.delta_txt, "delta")?;
-    let key = read_fe_txt(&args.key_txt, "key")?;
+    let k0 = sample_local_key(&mut seed_rng);
     let sender_triples = read_triples_csv(&args.triples_csv)?;
     eyre::ensure!(
         sender_triples.len() == sender_set.len(),
@@ -212,9 +209,14 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
         sender_set.len()
     );
 
-    let mut psi_sum = PsiSumSender::new(delta, key, &mut channel)
+    // Count only PSI-SUM protocol work (init/run/open), excluding set/file setup.
+    let start = Instant::now();
+    let bytes_sent_before = channel.bytes_sent();
+    let bytes_received_before = channel.bytes_received();
+
+    let mut psi_sum = PsiSumSender::new(delta, k0, &mut channel)
         .map_err(|e| eyre::eyre!("sender failed to initialize psi_sum: {e}"))?;
-    let mut protocol_rng = StdRng::from_seed(derive_seed(shared_seed, b"sender-protocol-rng"));
+    let mut protocol_rng = sample_local_protocol_rng(&mut seed_rng);
     let sum_share = psi_sum
         .run(
             &sender_set,
@@ -236,16 +238,15 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     Ok(PartyRun {
         side: Side::Sender,
         opened_sum,
-        bytes_sent: channel.bytes_sent(),
-        bytes_received: channel.bytes_received(),
+        bytes_sent: channel.bytes_sent().saturating_sub(bytes_sent_before),
+        bytes_received: channel.bytes_received().saturating_sub(bytes_received_before),
         elapsed_ms: start.elapsed().as_millis(),
     })
 }
 
 fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     let mut channel = connect_with_retry(addr).map_err(|e| eyre::eyre!("{e}"))?;
-    let start = Instant::now();
-
+    let mut local_rng = rand::rng();
     let shared_seed_bytes = channel
         .receive()
         .map_err(|e| eyre::eyre!("receiver failed to receive shared seed: {e}"))?;
@@ -262,7 +263,7 @@ fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     let expected = expected_psi_sum(&sender_set, &receiver_set);
 
     let delta = read_fe_txt(&args.delta_txt, "delta")?;
-    let key = read_fe_txt(&args.key_txt, "key")?;
+    let k1 = sample_local_key(&mut local_rng);
     let receiver_triples = read_triples_csv(&args.triples_csv)?;
     eyre::ensure!(
         receiver_triples.len() == sender_set.len(),
@@ -271,9 +272,14 @@ fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
         sender_set.len()
     );
 
-    let mut psi_sum = PsiSumReceiver::new(delta, key, &mut channel)
+    // Count only PSI-SUM protocol work (init/run/open), excluding set/file setup.
+    let start = Instant::now();
+    let bytes_sent_before = channel.bytes_sent();
+    let bytes_received_before = channel.bytes_received();
+
+    let mut psi_sum = PsiSumReceiver::new(delta, k1, &mut channel)
         .map_err(|e| eyre::eyre!("receiver failed to initialize psi_sum: {e}"))?;
-    let mut protocol_rng = StdRng::from_seed(derive_seed(shared_seed, b"receiver-protocol-rng"));
+    let mut protocol_rng = sample_local_protocol_rng(&mut local_rng);
     let sum_share = psi_sum
         .run(
             &receiver_set,
@@ -289,8 +295,8 @@ fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     Ok(PartyRun {
         side: Side::Receiver,
         opened_sum: expected,
-        bytes_sent: channel.bytes_sent(),
-        bytes_received: channel.bytes_received(),
+        bytes_sent: channel.bytes_sent().saturating_sub(bytes_sent_before),
+        bytes_received: channel.bytes_received().saturating_sub(bytes_received_before),
         elapsed_ms: start.elapsed().as_millis(),
     })
 }

@@ -58,8 +58,6 @@ pub fn batch_multiply(
         );
     }
 
-    let start = std::time::Instant::now();
-
     // Build opening inputs directly without materializing d_shares/e_shares.
     let n = triple_shares.len();
     let mut d_senders: Vec<BeDOZaSender> = Vec::with_capacity(n);
@@ -90,46 +88,26 @@ pub fn batch_multiply(
         e_receivers.push(e_receiver);
     }
 
-    println!("Time elapsed: {:?}", start.elapsed());
-    println!("Side: {}", side);
-
     let (d_receiver_values, e_receiver_values) = if !side {
-        println!("Channel bytes sent until this point: {}", channel.bytes_sent());
-        println!("Time elapsed: {:?}", start.elapsed());
         send_open_shares(&d_senders, channel)
             .map_err(|e| anyhow!("Failed to send open d shares: {}", e))?;
-        println!("Channel bytes sent until this point: {}", channel.bytes_sent());
-        println!("Time elapsed: {:?}", start.elapsed());
         send_open_shares(&e_senders, channel)
             .map_err(|e| anyhow!("Failed to send open e shares: {}", e))?;
-        println!("Channel bytes sent until this point: {}", channel.bytes_sent());
-        println!("Time elapsed: {:?}", start.elapsed());
-
         let d_values = receive_open_shares(&d_receivers, channel)
             .map_err(|e| anyhow!("Failed to receive open d shares: {}", e))?;
-        println!("Time elapsed: {:?}", start.elapsed());
         let e_values = receive_open_shares(&e_receivers, channel)
             .map_err(|e| anyhow!("Failed to receive open e shares: {}", e))?;
-        println!("Time elapsed: {:?}", start.elapsed());
         (d_values, e_values)
     } else {
         let d_values = receive_open_shares(&d_receivers, channel)
             .map_err(|e| anyhow!("Failed to receive open d shares: {}", e))?;
-
-        println!("Time elapsed: {:?}", start.elapsed());
         let e_values = receive_open_shares(&e_receivers, channel)
             .map_err(|e| anyhow!("Failed to receive open e shares: {}", e))?;
 
-        println!("Channel bytes sent until this point: {}", channel.bytes_sent());
-        println!("Time elapsed: {:?}", start.elapsed());
         send_open_shares(&d_senders, channel)
             .map_err(|e| anyhow!("Failed to send open d shares: {}", e))?;
-        println!("Channel bytes sent until this point: {}", channel.bytes_sent());
-        println!("Time elapsed: {:?}", start.elapsed());
         send_open_shares(&e_senders, channel)
             .map_err(|e| anyhow!("Failed to send open e shares: {}", e))?;
-        println!("Channel bytes sent until this point: {}", channel.bytes_sent());
-        println!("Time elapsed: {:?}", start.elapsed());
         (d_values, e_values)
     };
 
@@ -149,8 +127,6 @@ pub fn batch_multiply(
         let ea = a_share * e;
         out.push(c_share + db + ea + (d * e));
     }
-
-    println!("Time elapsed: {:?}", start.elapsed());
 
     Ok(out)
 }
@@ -209,43 +185,40 @@ pub fn batch_multiply_cross_owned_sender(
         triple_shares.len()
     );
 
-    let d_sender_shares: Vec<BeDOZaSender> = x_sender_shares
-        .iter()
-        .zip(triple_shares.iter())
-        .map(|(x_share, triple_share)| {
-            let (a_share, _, _) = triple_share;
-            *x_share - *a_share.bedoza_sender()
-        })
-        .collect();
+    let n = x_sender_shares.len();
+    let mut d_sender_shares = Vec::with_capacity(n);
+    for (x_share, triple_share) in x_sender_shares.iter().zip(triple_shares.iter()) {
+        let (a_share, _, _) = triple_share;
+        d_sender_shares.push(*x_share - *a_share.bedoza_sender());
+    }
     send_open_shares(&d_sender_shares, channel)
         .map_err(|e| anyhow!("Failed to send sender-side d openings: {}", e))?;
     let d_values =
         receive_fe_vec(channel).map_err(|e| anyhow!("Failed to receive opened d values: {}", e))?;
     ensure!(
-        d_values.len() == x_sender_shares.len(),
+        d_values.len() == n,
         "Opened d length mismatch: expected {}, got {}",
-        x_sender_shares.len(),
+        n,
         d_values.len()
     );
 
-    let e_receiver_shares: Vec<BeDOZaReceiver> = y_receiver_shares
-        .iter()
-        .zip(triple_shares.iter())
-        .map(|(y_share, triple_share)| {
-            let (_, b_share, _) = triple_share;
-            *y_share - *b_share.bedoza_receiver()
-        })
-        .collect();
-    let opened_e_values = receive_open_shares(&e_receiver_shares, channel)
+    let mut e_receiver_shares = Vec::with_capacity(n);
+    for (y_share, triple_share) in y_receiver_shares.iter().zip(triple_shares.iter()) {
+        let (_, b_share, _) = triple_share;
+        e_receiver_shares.push(*y_share - *b_share.bedoza_receiver());
+    }
+    let mut e_values = receive_open_shares(&e_receiver_shares, channel)
         .map_err(|e| anyhow!("Failed to receive opened e shares: {}", e))?;
-    let e_values: Vec<FE> = opened_e_values
-        .iter()
-        .zip(triple_shares.iter())
-        .map(|(&opened_e, triple_share)| {
-            let (_, b_share, _) = triple_share;
-            opened_e - b_share.bedoza_sender().val()
-        })
-        .collect();
+    ensure!(
+        e_values.len() == n,
+        "Opened e length mismatch: expected {}, got {}",
+        n,
+        e_values.len()
+    );
+    for (opened_e, triple_share) in e_values.iter_mut().zip(triple_shares.iter()) {
+        let (_, b_share, _) = triple_share;
+        *opened_e -= b_share.bedoza_sender().val();
+    }
     send_fe_vec(&e_values, channel)
         .map_err(|e| anyhow!("Failed to send opened e values: {}", e))?;
 
@@ -271,43 +244,40 @@ pub fn batch_multiply_cross_owned_receiver(
         triple_shares.len()
     );
 
-    let d_receiver_shares: Vec<BeDOZaReceiver> = x_receiver_shares
-        .iter()
-        .zip(triple_shares.iter())
-        .map(|(x_share, triple_share)| {
-            let (a_share, _, _) = triple_share;
-            *x_share - *a_share.bedoza_receiver()
-        })
-        .collect();
-    let opened_d_values = receive_open_shares(&d_receiver_shares, channel)
+    let n = x_receiver_shares.len();
+    let mut d_receiver_shares = Vec::with_capacity(n);
+    for (x_share, triple_share) in x_receiver_shares.iter().zip(triple_shares.iter()) {
+        let (a_share, _, _) = triple_share;
+        d_receiver_shares.push(*x_share - *a_share.bedoza_receiver());
+    }
+    let mut d_values = receive_open_shares(&d_receiver_shares, channel)
         .map_err(|e| anyhow!("Failed to receive opened d shares: {}", e))?;
-    let d_values: Vec<FE> = opened_d_values
-        .iter()
-        .zip(triple_shares.iter())
-        .map(|(&opened_d, triple_share)| {
-            let (a_share, _, _) = triple_share;
-            opened_d - a_share.bedoza_sender().val()
-        })
-        .collect();
+    ensure!(
+        d_values.len() == n,
+        "Opened d length mismatch: expected {}, got {}",
+        n,
+        d_values.len()
+    );
+    for (opened_d, triple_share) in d_values.iter_mut().zip(triple_shares.iter()) {
+        let (a_share, _, _) = triple_share;
+        *opened_d -= a_share.bedoza_sender().val();
+    }
     send_fe_vec(&d_values, channel)
         .map_err(|e| anyhow!("Failed to send opened d values: {}", e))?;
 
-    let e_sender_shares: Vec<BeDOZaSender> = y_sender_shares
-        .iter()
-        .zip(triple_shares.iter())
-        .map(|(y_share, triple_share)| {
-            let (_, b_share, _) = triple_share;
-            *y_share - *b_share.bedoza_sender()
-        })
-        .collect();
+    let mut e_sender_shares = Vec::with_capacity(n);
+    for (y_share, triple_share) in y_sender_shares.iter().zip(triple_shares.iter()) {
+        let (_, b_share, _) = triple_share;
+        e_sender_shares.push(*y_share - *b_share.bedoza_sender());
+    }
     send_open_shares(&e_sender_shares, channel)
         .map_err(|e| anyhow!("Failed to send receiver-side e openings: {}", e))?;
     let e_values =
         receive_fe_vec(channel).map_err(|e| anyhow!("Failed to receive opened e values: {}", e))?;
     ensure!(
-        e_values.len() == y_sender_shares.len(),
+        e_values.len() == n,
         "Opened e length mismatch: expected {}, got {}",
-        y_sender_shares.len(),
+        n,
         e_values.len()
     );
 

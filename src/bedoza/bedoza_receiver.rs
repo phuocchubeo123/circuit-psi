@@ -39,20 +39,13 @@ pub fn receive_open_shares(
 ) -> Result<Vec<FE>> {
     // Always consume the open protocol messages before performing validation checks.
     // This avoids leaving the sender blocked waiting for our seed on error paths.
-    let start = std::time::Instant::now();
     let values = receive_fe_vec(channel).map_err(|e| anyhow!("Failed to receive values: {}", e))?;
-
-    println!("Receive open shares so far: {:?}", start.elapsed());
 
     let mut rng = rand::rng();
     let seed: [u8; 32] = rng.random();
     channel.send(&seed)?;
 
-    println!("Receive open shares so far: {:?}", start.elapsed());
-
     let acc_pad = receive_fe(channel).map_err(|e| anyhow!("Failed to receive pads: {}", e))?;
-
-    println!("Receive open shares so far: {:?}", start.elapsed());
 
     ensure!(
         !bedoza_receivers.is_empty(),
@@ -86,8 +79,6 @@ pub fn receive_open_shares(
         acc_val += coeff * value;
         acc_tag += coeff * bedoza_receiver.tag();
     }
-
-    println!("Receive open shares so far: {:?}", start.elapsed());
 
     // Consistency check 
     ensure!(
