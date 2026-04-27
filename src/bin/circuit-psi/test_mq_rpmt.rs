@@ -67,7 +67,7 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
         .send(&shared_seed)
         .map_err(|e| eyre::eyre!("sender failed to send shared seed: {e}"))?;
 
-    let (sender_set, receiver_set) =
+    let (sender_set, _receiver_set) =
         sample_correlated_sets(shared_seed, args.set_size, args.intersection_size)?;
     let mut mq_rpmt = MqRpmtSender::new(fq(97), fq(173), &mut channel)
         .map_err(|e| eyre::eyre!("sender failed to initialize mq_rpmt: {e}"))?;
@@ -75,6 +75,11 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     let output = mq_rpmt
         .run(&sender_set, &mut protocol_rng, &mut channel)
         .map_err(|e| eyre::eyre!("sender failed to run mq_rpmt: {e}"))?;
+
+    let bytes_sent = channel.bytes_sent();
+    let bytes_received = channel.bytes_received();
+    let elapsed_ms = start.elapsed().as_millis();
+
 
     let opened_bitmap = open_authenticated_shuffled_bitmap_receive(
         &output.authenticated_shuffled_bitmap,
@@ -91,9 +96,9 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     Ok(PartyRun {
         side: Side::Sender,
         public_shuffled_bitmap: output.shuffled_bitmap,
-        bytes_sent: channel.bytes_sent(),
-        bytes_received: channel.bytes_received(),
-        elapsed_ms: start.elapsed().as_millis(),
+        bytes_sent,
+        bytes_received,
+        elapsed_ms,
     })
 }
 
@@ -112,7 +117,7 @@ fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     let mut shared_seed = [0u8; 32];
     shared_seed.copy_from_slice(&shared_seed_bytes);
 
-    let (sender_set, receiver_set) =
+    let (_sender_set, receiver_set) =
         sample_correlated_sets(shared_seed, args.set_size, args.intersection_size)?;
     let mut mq_rpmt = MqRpmtReceiver::new(fq(131), fq(149), &mut channel)
         .map_err(|e| eyre::eyre!("receiver failed to initialize mq_rpmt: {e}"))?;
@@ -120,6 +125,10 @@ fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     let output = mq_rpmt
         .run(&receiver_set, &mut protocol_rng, &mut channel)
         .map_err(|e| eyre::eyre!("receiver failed to run mq_rpmt: {e}"))?;
+
+    let bytes_sent = channel.bytes_sent();
+    let bytes_received = channel.bytes_received();
+    let elapsed_ms = start.elapsed().as_millis();
 
     open_authenticated_shuffled_bitmap_send(&output.authenticated_shuffled_bitmap, &mut channel)
         .map_err(|e| eyre::eyre!("receiver failed to send bitmap opening: {e}"))?;
@@ -139,9 +148,9 @@ fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     Ok(PartyRun {
         side: Side::Receiver,
         public_shuffled_bitmap: output.shuffled_bitmap,
-        bytes_sent: channel.bytes_sent(),
-        bytes_received: channel.bytes_received(),
-        elapsed_ms: start.elapsed().as_millis(),
+        bytes_sent,
+        bytes_received,
+        elapsed_ms,
     })
 }
 

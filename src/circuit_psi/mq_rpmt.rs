@@ -17,24 +17,6 @@ use anyhow::{Result, anyhow, ensure};
 use rand::{Rng, RngExt};
 use std::collections::HashSet;
 
-fn exchange_set_size(local_len: usize, channel: &mut SwankyChannel) -> Result<usize> {
-    channel
-        .send(&(local_len as u64).to_le_bytes())
-        .map_err(|e| anyhow!("failed to send local set size: {e}"))?;
-    let remote_len_bytes = channel
-        .receive()
-        .map_err(|e| anyhow!("failed to receive remote set size: {e}"))?;
-    ensure!(
-        remote_len_bytes.len() == 8,
-        "expected 8 bytes for remote set size, got {}",
-        remote_len_bytes.len()
-    );
-
-    let mut bytes = [0u8; 8];
-    bytes.copy_from_slice(&remote_len_bytes);
-    Ok(u64::from_le_bytes(bytes) as usize)
-}
-
 fn random_permutation<RNG: Rng>(n: usize, rng: &mut RNG) -> Vec<usize> {
     let mut permutation: Vec<usize> = (0..n).collect();
     for i in (1..n).rev() {
@@ -505,6 +487,7 @@ impl MqRpmtReceiver {
     }
 }
 
+// for debug only
 pub fn open_authenticated_shuffled_bitmap_send(
     authenticated_bitmap: &[BeDOZaSender],
     channel: &mut SwankyChannel,
@@ -513,10 +496,29 @@ pub fn open_authenticated_shuffled_bitmap_send(
         .map_err(|e| anyhow!("failed to send authenticated shuffled bitmap opening: {e}"))
 }
 
+// for debug only
 pub fn open_authenticated_shuffled_bitmap_receive(
     authenticated_bitmap: &[BeDOZaReceiver],
     channel: &mut SwankyChannel,
 ) -> Result<Vec<FE>> {
     receive_open_shares(authenticated_bitmap, channel)
         .map_err(|e| anyhow!("failed to receive authenticated shuffled bitmap opening: {e}"))
+}
+
+fn exchange_set_size(local_len: usize, channel: &mut SwankyChannel) -> Result<usize> {
+    channel
+        .send(&(local_len as u64).to_le_bytes())
+        .map_err(|e| anyhow!("failed to send local set size: {e}"))?;
+    let remote_len_bytes = channel
+        .receive()
+        .map_err(|e| anyhow!("failed to receive remote set size: {e}"))?;
+    ensure!(
+        remote_len_bytes.len() == 8,
+        "expected 8 bytes for remote set size, got {}",
+        remote_len_bytes.len()
+    );
+
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&remote_len_bytes);
+    Ok(u64::from_le_bytes(bytes) as usize)
 }

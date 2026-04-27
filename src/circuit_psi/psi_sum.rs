@@ -23,7 +23,7 @@ fn sum_bedoza_values(values: &[BeDOZa]) -> Result<BeDOZa> {
 
     let mut acc = values[0];
     for value in values.iter().skip(1) {
-        acc = acc + *value;
+        acc = acc + value;
     }
 
     Ok(acc)
