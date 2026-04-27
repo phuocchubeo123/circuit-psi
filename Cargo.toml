@@ -55,6 +55,10 @@ name = "create_fake_triples"
 path = "src/bin/bedoza/create_fake_triples.rs"
 
 [[bin]]
+name = "create_fake_triples_interactive"
+path = "src/bin/bedoza/create_fake_triples_interactive.rs"
+
+[[bin]]
 name = "test_batch_multiply"
 path = "src/bin/bedoza/test_batch_multiply.rs"
 
