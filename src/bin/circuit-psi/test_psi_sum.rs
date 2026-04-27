@@ -201,13 +201,14 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
 
     let delta = read_fe_txt(&args.delta_txt, "delta")?;
     let k0 = sample_local_key(&mut seed_rng);
-    let sender_triples = read_triples_csv(&args.triples_csv)?;
+    let sender_triples_all = read_triples_csv(&args.triples_csv)?;
     eyre::ensure!(
-        sender_triples.len() == sender_set.len(),
-        "sender triple count {} does not match set size {}",
-        sender_triples.len(),
-        sender_set.len()
+        sender_triples_all.len() >= sender_set.len(),
+        "sender set size {} exceeds prepared triple count {}",
+        sender_set.len(),
+        sender_triples_all.len()
     );
+    let sender_triples = &sender_triples_all[..sender_set.len()];
 
     // Count only PSI-SUM protocol work (init/run/open), excluding set/file setup.
     let start = Instant::now();
@@ -220,7 +221,7 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     let sum_share = psi_sum
         .run(
             &sender_set,
-            &sender_triples,
+            sender_triples,
             &mut protocol_rng,
             &mut channel,
         )
@@ -264,13 +265,14 @@ fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
 
     let delta = read_fe_txt(&args.delta_txt, "delta")?;
     let k1 = sample_local_key(&mut local_rng);
-    let receiver_triples = read_triples_csv(&args.triples_csv)?;
+    let receiver_triples_all = read_triples_csv(&args.triples_csv)?;
     eyre::ensure!(
-        receiver_triples.len() == sender_set.len(),
-        "receiver triple count {} does not match set size {}",
-        receiver_triples.len(),
-        sender_set.len()
+        receiver_triples_all.len() >= sender_set.len(),
+        "receiver set size {} exceeds prepared triple count {}",
+        sender_set.len(),
+        receiver_triples_all.len()
     );
+    let receiver_triples = &receiver_triples_all[..sender_set.len()];
 
     // Count only PSI-SUM protocol work (init/run/open), excluding set/file setup.
     let start = Instant::now();
@@ -283,7 +285,7 @@ fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     let sum_share = psi_sum
         .run(
             &receiver_set,
-            &receiver_triples,
+            receiver_triples,
             &mut protocol_rng,
             &mut channel,
         )
