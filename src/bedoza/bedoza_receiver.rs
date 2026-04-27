@@ -1,6 +1,6 @@
 use crate::{
     bedoza::comm_util::{receive_fe, receive_fe_vec}, 
-    math::defines::FE,
+    math::defines::{FE, random_fe_vec_from_rng},
     tcp_channel::SwankyChannel
 
 };
@@ -39,13 +39,20 @@ pub fn receive_open_shares(
 ) -> Result<Vec<FE>> {
     // Always consume the open protocol messages before performing validation checks.
     // This avoids leaving the sender blocked waiting for our seed on error paths.
+    let start = std::time::Instant::now();
     let values = receive_fe_vec(channel).map_err(|e| anyhow!("Failed to receive values: {}", e))?;
+
+    println!("Receive open shares so far: {:?}", start.elapsed());
 
     let mut rng = rand::rng();
     let seed: [u8; 32] = rng.random();
     channel.send(&seed)?;
 
+    println!("Receive open shares so far: {:?}", start.elapsed());
+
     let acc_pad = receive_fe(channel).map_err(|e| anyhow!("Failed to receive pads: {}", e))?;
+
+    println!("Receive open shares so far: {:?}", start.elapsed());
 
     ensure!(
         !bedoza_receivers.is_empty(),
@@ -69,13 +76,18 @@ pub fn receive_open_shares(
     }
 
     let mut seeded_rng = StdRng::from_seed(seed);
+    let coeffs = random_fe_vec_from_rng(&mut seeded_rng, bedoza_receivers.len())?;
     let mut acc_val = FE::zero();
     let mut acc_tag = FE::zero();
-    for (value, bedoza_receiver) in values.iter().zip(bedoza_receivers.iter()) {
-        let coeff = random_fe_from_rng(&mut seeded_rng);
+    for (coeff, (value, bedoza_receiver)) in coeffs
+        .iter()
+        .zip(values.iter().zip(bedoza_receivers.iter()))
+    {
         acc_val += coeff * value;
         acc_tag += coeff * bedoza_receiver.tag();
     }
+
+    println!("Receive open shares so far: {:?}", start.elapsed());
 
     // Consistency check 
     ensure!(
@@ -84,11 +96,6 @@ pub fn receive_open_shares(
     );
 
     Ok(values)
-}
-
-fn random_fe_from_rng(rng: &mut StdRng) -> FE {
-    let bytes: [u8; 32] = rng.random();
-    FE::from_bytes_le_mod_order(&bytes)
 }
 
 pub fn linear_comb_receiver(

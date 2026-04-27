@@ -90,6 +90,9 @@ pub fn batch_multiply(
         e_receivers.push(e_receiver);
     }
 
+    println!("Time elapsed: {:?}", start.elapsed());
+    println!("Side: {}", side);
+
     let (d_receiver_values, e_receiver_values) = if !side {
         println!("Channel bytes sent until this point: {}", channel.bytes_sent());
         println!("Time elapsed: {:?}", start.elapsed());
@@ -112,6 +115,8 @@ pub fn batch_multiply(
     } else {
         let d_values = receive_open_shares(&d_receivers, channel)
             .map_err(|e| anyhow!("Failed to receive open d shares: {}", e))?;
+
+        println!("Time elapsed: {:?}", start.elapsed());
         let e_values = receive_open_shares(&e_receivers, channel)
             .map_err(|e| anyhow!("Failed to receive open e shares: {}", e))?;
 

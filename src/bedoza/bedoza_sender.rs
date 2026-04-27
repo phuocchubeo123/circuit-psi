@@ -1,10 +1,10 @@
 use crate::{
     bedoza::comm_util::send_fe, 
-    math::defines::FE, 
+    math::defines::{FE, random_fe_vec_from_rng}, 
     network::tcp_channel::SwankyChannel,
 };
 use anyhow::{Result, anyhow, ensure};
-use rand::{RngExt, SeedableRng, rngs::StdRng};
+use rand::{SeedableRng, rngs::StdRng};
 use std::ops::{Add, Mul, Sub};
 
 #[derive(Copy, Clone)]
@@ -48,21 +48,16 @@ pub fn send_open_shares(
     let mut seed = [0u8; 32];
     seed.copy_from_slice(&seed_bytes);
     let mut seeded_rng = StdRng::from_seed(seed);
+    let coeffs = random_fe_vec_from_rng(&mut seeded_rng, bedoza_senders.len())?;
     let mut acc_pad = FE::zero();
 
-    for sender in bedoza_senders {
-        let coeff = random_fe_from_rng(&mut seeded_rng);
+    for (coeff, sender) in coeffs.iter().zip(bedoza_senders.iter()) {
         acc_pad += coeff * sender.pad();
     }
 
     send_fe(acc_pad, channel).map_err(|e| anyhow!("Failed to send pads: {}", e))?;
 
     Ok(())
-}
-
-fn random_fe_from_rng(rng: &mut StdRng) -> FE {
-    let bytes: [u8; 32] = rng.random();
-    FE::from_bytes_le_mod_order(&bytes)
 }
 
 pub fn linear_comb_sender(
