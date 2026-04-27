@@ -4,8 +4,8 @@ use circuit_psi::{
         BeDOZa, BeDOZaTriple,
         bedoza_multiply::batch_multiply,
         bedoza_receiver::BeDOZaReceiver,
-        bedoza_sender::{BeDOZaSender, send_open_shares},
-        comm_util::receive_fe_vec,
+        bedoza_sender::BeDOZaSender,
+        comm_util::{receive_fe_vec, send_fe_vec},
         open_values_receive, open_values_send,
     },
     math::defines::FE,
@@ -180,11 +180,10 @@ fn sample_sender_shares<R: Rng>(n: usize, side: bool, rng: &mut R) -> Vec<BeDOZa
     shares
 }
 
-fn receive_peer_sender_shares(
+fn receive_peer_sender_components(
     expected_count: usize,
-    peer_side: bool,
     channel: &mut SwankyChannel,
-) -> Result<Vec<BeDOZaSender>> {
+) -> Result<(Vec<FE>, Vec<FE>)> {
     let values = receive_fe_vec(channel).map_err(|e| anyhow!("failed to receive values: {e}"))?;
     let pads = receive_fe_vec(channel).map_err(|e| anyhow!("failed to receive pads: {e}"))?;
     ensure!(
@@ -200,54 +199,60 @@ fn receive_peer_sender_shares(
         pads.len()
     );
 
-    Ok(values
-        .into_iter()
-        .zip(pads)
-        .map(|(val, pad)| {
-            let _ = peer_side;
-            BeDOZaSender::new(val, pad)
-        })
-        .collect())
+    Ok((values, pads))
 }
 
 fn exchange_sender_shares(
     local_shares: &[BeDOZaSender],
     side: bool,
     channel: &mut SwankyChannel,
-) -> Result<Vec<BeDOZaSender>> {
-    let peer_side = !side;
+) -> Result<(Vec<FE>, Vec<FE>)> {
+    let local_values: Vec<FE> = local_shares.iter().map(|s| s.val()).collect();
+    let local_pads: Vec<FE> = local_shares.iter().map(|s| s.pad()).collect();
+
     if !side {
-        send_open_shares(local_shares, channel)
-            .map_err(|e| anyhow!("failed to send local sender shares: {e}"))?;
-        receive_peer_sender_shares(local_shares.len(), peer_side, channel)
+        send_fe_vec(&local_values, channel)
+            .map_err(|e| anyhow!("failed to send local sender values: {e}"))?;
+        send_fe_vec(&local_pads, channel)
+            .map_err(|e| anyhow!("failed to send local sender pads: {e}"))?;
+        receive_peer_sender_components(local_shares.len(), channel)
     } else {
-        let peer = receive_peer_sender_shares(local_shares.len(), peer_side, channel)?;
-        send_open_shares(local_shares, channel)
-            .map_err(|e| anyhow!("failed to send local sender shares: {e}"))?;
+        let peer = receive_peer_sender_components(local_shares.len(), channel)?;
+        send_fe_vec(&local_values, channel)
+            .map_err(|e| anyhow!("failed to send local sender values: {e}"))?;
+        send_fe_vec(&local_pads, channel)
+            .map_err(|e| anyhow!("failed to send local sender pads: {e}"))?;
         Ok(peer)
     }
 }
 
 fn build_bedoza_inputs(
     local_senders: &[BeDOZaSender],
-    peer_senders: &[BeDOZaSender],
+    peer_values: &[FE],
+    peer_pads: &[FE],
     delta: FE,
     side: bool,
 ) -> Result<Vec<BeDOZa>> {
     ensure!(
-        local_senders.len() == peer_senders.len(),
-        "input sender share length mismatch: local={} peer={}",
+        local_senders.len() == peer_values.len(),
+        "input sender/value length mismatch: local={} peer_values={}",
         local_senders.len(),
-        peer_senders.len()
+        peer_values.len()
+    );
+    ensure!(
+        peer_values.len() == peer_pads.len(),
+        "peer value/pad length mismatch: values={} pads={}",
+        peer_values.len(),
+        peer_pads.len()
     );
 
     Ok(local_senders
         .iter()
-        .zip(peer_senders.iter())
-        .map(|(local, peer)| {
+        .zip(peer_values.iter().zip(peer_pads.iter()))
+        .map(|(local, (&peer_value, &peer_pad))| {
             BeDOZa::new(
                 *local,
-                BeDOZaReceiver::new(delta * peer.val() - peer.pad(), delta),
+                BeDOZaReceiver::new(delta * peer_value - peer_pad, delta),
                 side,
             )
         })
@@ -316,19 +321,19 @@ fn run_party(args: &Args) -> Result<()> {
     let local_x_senders = sample_sender_shares(args.n, side, &mut rng);
     let local_y_senders = sample_sender_shares(args.n, side, &mut rng);
 
-    let peer_x_senders = exchange_sender_shares(&local_x_senders, side, &mut channel)?;
-    let peer_y_senders = exchange_sender_shares(&local_y_senders, side, &mut channel)?;
+    let (peer_x_values, peer_x_pads) = exchange_sender_shares(&local_x_senders, side, &mut channel)?;
+    let (peer_y_values, peer_y_pads) = exchange_sender_shares(&local_y_senders, side, &mut channel)?;
 
-    let x_shares = build_bedoza_inputs(&local_x_senders, &peer_x_senders, delta, side)?;
-    let y_shares = build_bedoza_inputs(&local_y_senders, &peer_y_senders, delta, side)?;
+    let x_shares = build_bedoza_inputs(&local_x_senders, &peer_x_values, &peer_x_pads, delta, side)?;
+    let y_shares = build_bedoza_inputs(&local_y_senders, &peer_y_values, &peer_y_pads, delta, side)?;
 
     let expected_products: Vec<FE> = local_x_senders
         .iter()
-        .zip(peer_x_senders.iter())
-        .zip(local_y_senders.iter().zip(peer_y_senders.iter()))
-        .map(|((x_local, x_peer), (y_local, y_peer))| {
-            let x = x_local.val() + x_peer.val();
-            let y = y_local.val() + y_peer.val();
+        .zip(peer_x_values.iter())
+        .zip(local_y_senders.iter().zip(peer_y_values.iter()))
+        .map(|((x_local, &x_peer_value), (y_local, &y_peer_value))| {
+            let x = x_local.val() + x_peer_value;
+            let y = y_local.val() + y_peer_value;
             x * y
         })
         .collect();
