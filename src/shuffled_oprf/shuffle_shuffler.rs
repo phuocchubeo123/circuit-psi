@@ -536,19 +536,14 @@ impl Shuffler {
             authenticated_x_powers_sender.len()
         );
 
-        // 6.1) Send shuffled OPRF points: (g^{r_{pi(i)}})^{1/(r_{pi(i)}(x_{pi(i)}+k))}.
-        let permuted_g_ri = checked_permute(g_ri, permutation)?;
-        let permuted_inverse_values = checked_permute(inverse_values, permutation)?;
-        let shuffled_oprf: Vec<Group> = permuted_g_ri
-            .iter()
-            .zip(permuted_inverse_values.iter())
-            .map(|(g_r_pi_i, inv_pi_i)| g_r_pi_i.scalar_mul(inv_pi_i))
-            .collect();
+        // 6.1) Build unshuffled OPRF once, then apply permutation.
+        // This avoids an extra full pass of scalar multiplications.
         let unshuffled_oprf: Vec<Group> = g_ri
             .iter()
             .zip(inverse_values.iter())
-            .map(|(g_ri, inverse)| g_ri.scalar_mul(inverse))
+            .map(|(g_ri_i, inverse_i)| g_ri_i.scalar_mul(inverse_i))
             .collect();
+        let shuffled_oprf = checked_permute(&unshuffled_oprf, permutation)?;
         send_group_elements(&shuffled_oprf, channel)
             .map_err(|e| anyhow!("step6 failed to send shuffled OPRF points: {}", e))?;
 
