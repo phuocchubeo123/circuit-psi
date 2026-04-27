@@ -8,11 +8,37 @@ use circuit_psi::{
         vole_triple::LPN21,
     },
 };
+use clap::{Args, Parser};
 use rand::{Rng, RngExt, SeedableRng, rngs::StdRng};
 use std::time::Instant;
 
-const SWANKY_ADDR: &str = "127.0.0.1:23000";
+const DEFAULT_N: usize = 1000;
+const DEFAULT_SENDER_ADDR: &str = "127.0.0.1";
+const DEFAULT_SENDER_PORT: u16 = 23000;
 const SHUFFLER_RNG_SEED: [u8; 32] = [42u8; 32];
+
+#[derive(Debug, Clone, Args)]
+struct NetworkArgs {
+    #[arg(long, default_value = DEFAULT_SENDER_ADDR)]
+    sender_addr: String,
+    #[arg(long, default_value_t = DEFAULT_SENDER_PORT)]
+    sender_port: u16,
+}
+
+impl NetworkArgs {
+    fn socket_addr(&self) -> String {
+        format!("{}:{}", self.sender_addr, self.sender_port)
+    }
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(name = "bench_shuffle_shuffler_steps")]
+struct Cli {
+    #[command(flatten)]
+    network: NetworkArgs,
+    #[arg(long, default_value_t = DEFAULT_N)]
+    n: usize,
+}
 
 fn random_permutation(n: usize, rng: &mut impl Rng) -> Vec<usize> {
     let mut p: Vec<usize> = (0..n).collect();
@@ -23,40 +49,66 @@ fn random_permutation(n: usize, rng: &mut impl Rng) -> Vec<usize> {
     p
 }
 
-fn timed<T, F>(label: &str, f: F) -> Result<T>
+fn timed<T, F>(
+    label: &str,
+    f: F,
+) -> Result<T>
 where
     F: FnOnce() -> Result<T>,
 {
     let start = Instant::now();
     let out = f();
     let elapsed = start.elapsed().as_millis();
-    println!("timing_ms {}={}", label, elapsed);
+    println!(
+        "step_stats {} time_ms={} bytes_sent_delta={} bytes_received_delta={}",
+        label, elapsed, 0, 0
+    );
+    out.with_context(|| format!("{} failed", label))
+}
+
+fn timed_channel<T, F>(
+    label: &str,
+    channel: &mut circuit_psi::tcp_channel::SwankyChannel,
+    f: F,
+) -> Result<T>
+where
+    F: FnOnce(&mut circuit_psi::tcp_channel::SwankyChannel) -> Result<T>,
+{
+    let before_sent = channel.bytes_sent();
+    let before_recv = channel.bytes_received();
+    let start = Instant::now();
+    let out = f(channel);
+    let elapsed = start.elapsed().as_millis();
+    let delta_sent = channel.bytes_sent().saturating_sub(before_sent);
+    let delta_recv = channel.bytes_received().saturating_sub(before_recv);
+    println!(
+        "step_stats {} time_ms={} bytes_sent_delta={} bytes_received_delta={}",
+        label, elapsed, delta_sent, delta_recv
+    );
     out.with_context(|| format!("{} failed", label))
 }
 
 fn main() -> Result<()> {
-    let n = std::env::args()
-        .nth(1)
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(1000);
-    ensure!(n > 0, "set size n must be > 0");
+    let args = Cli::parse();
+    ensure!(args.n > 0, "set size n must be > 0");
 
-    println!("role=shuffler_steps n={}", n);
+    let sender_socket = args.network.socket_addr();
+    println!("role=shuffler_steps n={} sender={}", args.n, sender_socket);
     let total_start = Instant::now();
 
     let delta_1 = fq(131);
     let shuffler_vole_key = fq(149);
 
     let mut channel = timed("listen_to", || {
-        listen_to(SWANKY_ADDR).context("listen swanky channel")
+        listen_to(&sender_socket).context("listen swanky channel")
     })?;
 
-    let mut auth_vole_receiver = timed("init_auth_vole_receiver", || {
-        BufferedVoleReceiver::init(&mut channel, delta_1, LPN21)
+    let mut auth_vole_receiver = timed_channel("init_auth_vole_receiver", &mut channel, |channel| {
+        BufferedVoleReceiver::init(channel, delta_1, LPN21)
             .map_err(|e| anyhow!("init auth receiver VOLE failed: {}", e))
     })?;
-    let mut auth_vole_sender = timed("init_auth_vole_sender", || {
-        BufferedVoleSender::init(&mut channel, LPN21)
+    let mut auth_vole_sender = timed_channel("init_auth_vole_sender", &mut channel, |channel| {
+        BufferedVoleSender::init(channel, LPN21)
             .map_err(|e| anyhow!("init auth sender VOLE failed: {}", e))
     })?;
     let shuffler = Shuffler::new(delta_1, shuffler_vole_key);
@@ -64,7 +116,7 @@ fn main() -> Result<()> {
     let mut perm_rng = rand::rng();
 
     let permutation = timed("generate_permutation", || {
-        Ok(random_permutation(n, &mut perm_rng))
+        Ok(random_permutation(args.n, &mut perm_rng))
     })?;
 
     let (
@@ -72,42 +124,45 @@ fn main() -> Result<()> {
         authenticated_inputs,
         authenticated_ri_receiver,
         authenticated_pi_sender,
-    ) = timed("step0", || {
+    ) = timed_channel("step0", &mut channel, |channel| {
         shuffler.step0_authenticate_oprf_key_and_xi_and_ri_and_send_pi(
             &permutation,
             &mut auth_vole_sender,
             &mut auth_vole_receiver,
-            &mut channel,
+            channel,
         )
     })?;
 
-    let mut k1_mul_vole_receiver = timed("init_k1_mul_vole_receiver", || {
-        BufferedVoleReceiver::init(&mut channel, shuffler_vole_key, LPN21)
+    let mut k1_mul_vole_receiver =
+        timed_channel("init_k1_mul_vole_receiver", &mut channel, |channel| {
+        BufferedVoleReceiver::init(channel, shuffler_vole_key, LPN21)
             .map_err(|e| anyhow!("init k1 mul receiver VOLE failed: {}", e))
     })?;
 
-    let authenticated_r_x_plus_k0_receiver = timed("step1", || {
+    let authenticated_r_x_plus_k0_receiver = timed_channel("step1", &mut channel, |channel| {
         shuffler.step1_inputer_authenticates_r_times_x_plus_k0_and_verifies(
             &authenticated_inputs,
             &authenticated_ri_receiver,
             &shuffler_key_share,
             &mut auth_vole_receiver,
-            &mut channel,
+            channel,
         )
     })?;
 
-    let (v_values, authenticated_u_receiver, authenticated_v_sender) = timed("step2", || {
-        shuffler.step2_vole_share_x_times_k1_and_authenticate(
-            &authenticated_inputs,
+    let (v_values, authenticated_u_receiver, authenticated_v_sender) =
+        timed_channel("step2", &mut channel, |channel| {
+        shuffler.step2_vole_share_r_times_k1_and_authenticate(
+            &authenticated_ri_receiver,
             shuffler_key_share.bedoza_sender(),
             &mut auth_vole_receiver,
             &mut auth_vole_sender,
             &mut k1_mul_vole_receiver,
-            &mut channel,
+            channel,
         )
     })?;
 
-    let (inverse_values, authenticated_inverse_sender) = timed("step3", || {
+    let (_r_x_k_values, inverse_values, authenticated_inverse_sender) =
+        timed_channel("step3", &mut channel, |channel| {
         shuffler.step3_receive_ri_x_plus_k0_plus_ui_and_receive_reauthenticate_and_inverse(
             &authenticated_r_x_plus_k0_receiver,
             &authenticated_u_receiver,
@@ -115,27 +170,27 @@ fn main() -> Result<()> {
             &authenticated_v_sender,
             &mut auth_vole_sender,
             &mut protocol_rng,
-            &mut channel,
+            channel,
         )
     })?;
 
-    let g_ri = timed("step4", || {
+    let g_ri = timed_channel("step4", &mut channel, |channel| {
         shuffler.step4_receive_g_ri_and_verify_pad_consistency_proof(
             &authenticated_ri_receiver,
-            &mut channel,
+            channel,
         )
     })?;
 
-    let (x, authenticated_x_powers_sender) = timed("step5", || {
+    let (x, authenticated_x_powers_sender) = timed_channel("step5", &mut channel, |channel| {
         shuffler.step5_receive_challenge_and_authenticate_xpi_and_prove_running_product(
             &permutation,
             &authenticated_pi_sender,
             &mut auth_vole_sender,
-            &mut channel,
+            channel,
         )
     })?;
 
-    let shuffled = timed("step6", || {
+    let shuffled = timed_channel("step6", &mut channel, |channel| {
         shuffler.step6_send_shuffled_oprf_points_and_open_and_verify_products(
             &permutation,
             &g_ri,
@@ -143,7 +198,7 @@ fn main() -> Result<()> {
             &authenticated_inverse_sender,
             x,
             &authenticated_x_powers_sender,
-            &mut channel,
+            channel,
         )
     })?;
 
@@ -154,7 +209,7 @@ fn main() -> Result<()> {
         channel.bytes_sent(),
         channel.bytes_received()
     );
-    println!("output_count={}", shuffled.len());
+    println!("output_count={}", shuffled.0.len());
 
     Ok(())
 }
