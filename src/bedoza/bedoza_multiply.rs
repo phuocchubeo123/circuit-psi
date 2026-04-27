@@ -66,8 +66,6 @@ pub fn batch_multiply(
     let mut d_receivers: Vec<BeDOZaReceiver> = Vec::with_capacity(n);
     let mut d_sender_values: Vec<FE> = Vec::with_capacity(n);
 
-    println!("Time elapsed: {:?}", start.elapsed());
-
     let mut e_senders: Vec<BeDOZaSender> = Vec::with_capacity(n);
     let mut e_receivers: Vec<BeDOZaReceiver> = Vec::with_capacity(n);
     let mut e_sender_values: Vec<FE> = Vec::with_capacity(n);
@@ -91,12 +89,6 @@ pub fn batch_multiply(
         e_senders.push(e_sender);
         e_receivers.push(e_receiver);
     }
-
-    println!("Time elapsed: {:?}", start.elapsed());
-
-    println!("Time elapsed: {:?}", start.elapsed());
-
-    println!("Time elapsed: {:?}", start.elapsed());
 
     let (d_receiver_values, e_receiver_values) = if !side {
         println!("Channel bytes sent until this point: {}", channel.bytes_sent());
@@ -152,6 +144,8 @@ pub fn batch_multiply(
         let ea = a_share * e;
         out.push(c_share + db + ea + (d * e));
     }
+
+    println!("Time elapsed: {:?}", start.elapsed());
 
     Ok(out)
 }

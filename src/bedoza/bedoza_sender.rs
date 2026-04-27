@@ -1,11 +1,11 @@
 use crate::{
-    bedoza::comm_util::send_fe_vec, 
-    math::defines::{FE, random_fe_vec_from_rng}, 
+    bedoza::comm_util::send_fe, 
+    math::defines::FE, 
     network::tcp_channel::SwankyChannel,
 };
 use anyhow::{Result, anyhow, ensure};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 use std::ops::{Add, Mul, Sub};
-use rand::{SeedableRng, rngs::StdRng};
 
 #[derive(Copy, Clone)]
 pub struct BeDOZaSender {
@@ -31,17 +31,13 @@ pub fn send_open_shares(
     bedoza_senders: &[BeDOZaSender],
     channel: &mut SwankyChannel,
 ) -> Result<()> {
-
-    let vals: Vec<FE> = bedoza_senders
-        .iter()
-        .map(|bedoza_sender| bedoza_sender.val())
-        .collect();
-    send_fe_vec(&vals, channel).map_err(|e| anyhow!("Failed to send vals: {}", e))?;
-
-    let pads: Vec<FE> = bedoza_senders
-        .iter()
-        .map(|bedoza_sender| bedoza_sender.pad())
-        .collect();
+    let mut value_buf = Vec::with_capacity(bedoza_senders.len() * 32);
+    for sender in bedoza_senders {
+        value_buf.extend_from_slice(sender.val().to_bytes_le().as_ref());
+    }
+    channel
+        .send(&value_buf)
+        .map_err(|e| anyhow!("Failed to send vals: {}", e))?;
 
     let seed_bytes = channel.receive()?;
     ensure!(
@@ -52,17 +48,21 @@ pub fn send_open_shares(
     let mut seed = [0u8; 32];
     seed.copy_from_slice(&seed_bytes);
     let mut seeded_rng = StdRng::from_seed(seed);
-    let coeffs = random_fe_vec_from_rng(&mut seeded_rng, bedoza_senders.len())?;
     let mut acc_pad = FE::zero();
 
-    for (coeff, pad) in coeffs.iter().zip(pads.iter()) {
-        acc_pad += coeff * pad;
+    for sender in bedoza_senders {
+        let coeff = random_fe_from_rng(&mut seeded_rng);
+        acc_pad += coeff * sender.pad();
     }
 
-
-    send_fe_vec(&[acc_pad], channel).map_err(|e| anyhow!("Failed to send pads: {}", e))?;
+    send_fe(acc_pad, channel).map_err(|e| anyhow!("Failed to send pads: {}", e))?;
 
     Ok(())
+}
+
+fn random_fe_from_rng(rng: &mut StdRng) -> FE {
+    let bytes: [u8; 32] = rng.random();
+    FE::from_bytes_le_mod_order(&bytes)
 }
 
 pub fn linear_comb_sender(

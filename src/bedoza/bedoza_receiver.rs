@@ -1,6 +1,6 @@
 use crate::{
-    bedoza::comm_util::receive_fe_vec, 
-    math::defines::{FE, random_fe_vec_from_rng},
+    bedoza::comm_util::{receive_fe, receive_fe_vec}, 
+    math::defines::FE,
     tcp_channel::SwankyChannel
 
 };
@@ -45,13 +45,7 @@ pub fn receive_open_shares(
     let seed: [u8; 32] = rng.random();
     channel.send(&seed)?;
 
-    let received_pads = receive_fe_vec(channel).map_err(|e| anyhow!("Failed to receive pads: {}", e))?;
-    ensure!(
-        received_pads.len() == 1,
-        "Expected exactly one pad accumulator, got {}",
-        received_pads.len()
-    );
-    let acc_pad = received_pads[0];
+    let acc_pad = receive_fe(channel).map_err(|e| anyhow!("Failed to receive pads: {}", e))?;
 
     ensure!(
         !bedoza_receivers.is_empty(),
@@ -75,13 +69,10 @@ pub fn receive_open_shares(
     }
 
     let mut seeded_rng = StdRng::from_seed(seed);
-    let coeffs = random_fe_vec_from_rng(&mut seeded_rng, bedoza_receivers.len())?;
     let mut acc_val = FE::zero();
     let mut acc_tag = FE::zero();
-    for (coeff, (value, bedoza_receiver)) in coeffs
-        .iter()
-        .zip(values.iter().zip(bedoza_receivers.iter()))
-    {
+    for (value, bedoza_receiver) in values.iter().zip(bedoza_receivers.iter()) {
+        let coeff = random_fe_from_rng(&mut seeded_rng);
         acc_val += coeff * value;
         acc_tag += coeff * bedoza_receiver.tag();
     }
@@ -93,6 +84,11 @@ pub fn receive_open_shares(
     );
 
     Ok(values)
+}
+
+fn random_fe_from_rng(rng: &mut StdRng) -> FE {
+    let bytes: [u8; 32] = rng.random();
+    FE::from_bytes_le_mod_order(&bytes)
 }
 
 pub fn linear_comb_receiver(
