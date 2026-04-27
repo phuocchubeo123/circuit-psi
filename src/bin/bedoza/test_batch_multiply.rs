@@ -335,7 +335,14 @@ fn run_party(args: &Args) -> Result<()> {
         })
         .collect();
 
+    let current_bytes_sent = channel.bytes_sent();
+    let current_bytes_received = channel.bytes_received();
+
     let outputs = batch_multiply(&x_shares, &y_shares, triples, side, &mut channel)?;
+
+    let multiply_bytes_sent = channel.bytes_sent() - current_bytes_sent;
+    let multiply_bytes_received = channel.bytes_received() - current_bytes_received;
+
     verify_outputs(&outputs, &expected_products, side, &mut channel)?;
 
     println!(
@@ -344,8 +351,8 @@ fn run_party(args: &Args) -> Result<()> {
         addr,
         args.n,
         start.elapsed().as_millis(),
-        channel.bytes_sent(),
-        channel.bytes_received()
+        multiply_bytes_sent,
+        multiply_bytes_received,
     );
 
     Ok(())
