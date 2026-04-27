@@ -82,5 +82,13 @@ path = "src/bin/circuit-psi/test_one_side_psu.rs"
 name = "test_two_side_psu"
 path = "src/bin/circuit-psi/test_two_side_psu.rs"
 
+[[bin]]
+name = "bench_fourq_fe_mul"
+path = "src/bin/field-bench/bench_fourq_fe_mul.rs"
+
+[[bin]]
+name = "bench_lambdaworks_fourq_mul"
+path = "src/bin/field-bench/bench_lambdaworks_fourq_mul.rs"
+
 [profile.release]
 lto = true

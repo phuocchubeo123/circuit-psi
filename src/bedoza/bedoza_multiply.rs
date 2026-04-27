@@ -60,50 +60,41 @@ pub fn batch_multiply(
 
     let start = std::time::Instant::now();
 
-    // First compute d = x - a and e = y - b
-    let d_shares: Vec<BeDOZa> = x_shares
+    // Build opening inputs directly without materializing d_shares/e_shares.
+    let n = triple_shares.len();
+    let mut d_senders: Vec<BeDOZaSender> = Vec::with_capacity(n);
+    let mut d_receivers: Vec<BeDOZaReceiver> = Vec::with_capacity(n);
+    let mut d_sender_values: Vec<FE> = Vec::with_capacity(n);
+
+    println!("Time elapsed: {:?}", start.elapsed());
+
+    let mut e_senders: Vec<BeDOZaSender> = Vec::with_capacity(n);
+    let mut e_receivers: Vec<BeDOZaReceiver> = Vec::with_capacity(n);
+    let mut e_sender_values: Vec<FE> = Vec::with_capacity(n);
+
+    for ((x_share, y_share), triple_share) in x_shares
         .iter()
+        .zip(y_shares.iter())
         .zip(triple_shares.iter())
-        .map(|(x_share, triple_share)| {
-            let (a_share, _, _) = triple_share;
-            x_share - a_share
-        })
-        .collect();
+    {
+        let (a_share, b_share, _) = triple_share;
+
+        let d_sender = *x_share.bedoza_sender() - *a_share.bedoza_sender();
+        let d_receiver = *x_share.bedoza_receiver() - *a_share.bedoza_receiver();
+        d_sender_values.push(d_sender.val());
+        d_senders.push(d_sender);
+        d_receivers.push(d_receiver);
+
+        let e_sender = *y_share.bedoza_sender() - *b_share.bedoza_sender();
+        let e_receiver = *y_share.bedoza_receiver() - *b_share.bedoza_receiver();
+        e_sender_values.push(e_sender.val());
+        e_senders.push(e_sender);
+        e_receivers.push(e_receiver);
+    }
 
     println!("Time elapsed: {:?}", start.elapsed());
 
-    let e_shares: Vec<BeDOZa> = y_shares
-        .iter()
-        .zip(triple_shares.iter())
-        .map(|(y_share, triple_share)| {
-            let (_, b_share, _) = triple_share;
-            y_share - b_share
-        })
-        .collect();
-
     println!("Time elapsed: {:?}", start.elapsed());
-
-    // Now open d and e to both parties. The two roles use opposite I/O order to avoid both
-    // sides blocking on the same receive call.
-    let d_senders: Vec<BeDOZaSender> = d_shares
-        .iter()
-        .map(|share| *share.bedoza_sender())
-        .collect();
-    let d_receivers: Vec<BeDOZaReceiver> = d_shares
-        .iter()
-        .map(|share| *share.bedoza_receiver())
-        .collect();
-
-    println!("Time elapsed: {:?}", start.elapsed());
-
-    let e_senders: Vec<BeDOZaSender> = e_shares
-        .iter()
-        .map(|share| *share.bedoza_sender())
-        .collect();
-    let e_receivers: Vec<BeDOZaReceiver> = e_shares
-        .iter()
-        .map(|share| *share.bedoza_receiver())
-        .collect();
 
     println!("Time elapsed: {:?}", start.elapsed());
 
@@ -145,52 +136,24 @@ pub fn batch_multiply(
         (d_values, e_values)
     };
 
-    let d_values: Vec<FE> = d_shares
-        .iter()
-        .zip(d_receiver_values.iter())
-        .map(|(share, &receiver_value)| share.bedoza_sender().val() + receiver_value)
-        .collect();
-    let e_values: Vec<FE> = e_shares
-        .iter()
-        .zip(e_receiver_values.iter())
-        .map(|(share, &receiver_value)| share.bedoza_sender().val() + receiver_value)
-        .collect();
+    let mut out = Vec::with_capacity(n);
+    for ((((triple_share, &d_sender_value), &d_receiver_value), &e_sender_value), &e_receiver_value) in
+        triple_shares
+            .iter()
+            .zip(d_sender_values.iter())
+            .zip(d_receiver_values.iter())
+            .zip(e_sender_values.iter())
+            .zip(e_receiver_values.iter())
+    {
+        let d = d_sender_value + d_receiver_value;
+        let e = e_sender_value + e_receiver_value;
+        let (a_share, b_share, c_share) = triple_share;
+        let db = b_share * d;
+        let ea = a_share * e;
+        out.push(c_share + db + ea + (d * e));
+    }
 
-    // Compute db and ea locally
-    let db_shares: Vec<BeDOZa> = d_values
-        .iter()
-        .zip(triple_shares.iter())
-        .map(|(&d, triple_share)| {
-            let (_, b_share, _) = triple_share;
-            b_share * d
-        })
-        .collect();
-
-    let ea_shares: Vec<BeDOZa> = e_values
-        .iter()
-        .zip(triple_shares.iter())
-        .map(|(&e, triple_share)| {
-            let (a_share, _, _) = triple_share;
-            a_share * e
-        })
-        .collect();
-
-    let de_values: Vec<FE> = d_values
-        .iter()
-        .zip(e_values.iter())
-        .map(|(&d, &e)| d * e)
-        .collect();
-
-    // Compute the final result: c = ab + db + ea + de
-    let xy_shares: Vec<BeDOZa> = triple_shares
-        .iter()
-        .zip(db_shares.iter())
-        .zip(ea_shares.iter())
-        .zip(de_values.iter())
-        .map(|((((_, _, c_share), db_share), ea_share), &de)| c_share + db_share + ea_share + de)
-        .collect();
-
-    Ok(xy_shares)
+    Ok(out)
 }
 
 fn finish_batch_multiply(
@@ -198,37 +161,34 @@ fn finish_batch_multiply(
     d_values: &[FE],
     e_values: &[FE],
 ) -> Vec<BeDOZa> {
-    let db_shares: Vec<BeDOZa> = d_values
-        .iter()
-        .zip(triple_shares.iter())
-        .map(|(&d, triple_share)| {
-            let (_, b_share, _) = triple_share;
-            b_share * d
-        })
-        .collect();
+    debug_assert_eq!(
+        triple_shares.len(),
+        d_values.len(),
+        "finish_batch_multiply length mismatch: triples={} d_values={}",
+        triple_shares.len(),
+        d_values.len()
+    );
+    debug_assert_eq!(
+        d_values.len(),
+        e_values.len(),
+        "finish_batch_multiply length mismatch: d_values={} e_values={}",
+        d_values.len(),
+        e_values.len()
+    );
 
-    let ea_shares: Vec<BeDOZa> = e_values
+    let n = triple_shares.len().min(d_values.len()).min(e_values.len());
+    let mut out = Vec::with_capacity(n);
+    for ((triple_share, &d), &e) in triple_shares
         .iter()
-        .zip(triple_shares.iter())
-        .map(|(&e, triple_share)| {
-            let (a_share, _, _) = triple_share;
-            a_share * e
-        })
-        .collect();
-
-    let de_values: Vec<FE> = d_values
-        .iter()
+        .zip(d_values.iter())
         .zip(e_values.iter())
-        .map(|(&d, &e)| d * e)
-        .collect();
-
-    triple_shares
-        .iter()
-        .zip(db_shares.iter())
-        .zip(ea_shares.iter())
-        .zip(de_values.iter())
-        .map(|((((_, _, c_share), db_share), ea_share), &de)| c_share + db_share + ea_share + de)
-        .collect()
+    {
+        let (a_share, b_share, c_share) = triple_share;
+        let db = b_share * d;
+        let ea = a_share * e;
+        out.push(c_share + db + ea + (d * e));
+    }
+    out
 }
 
 pub fn batch_multiply_cross_owned_sender(
