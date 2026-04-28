@@ -53,12 +53,11 @@ impl Inputer {
         vole_sender: &mut BufferedVoleSender,
         vole_receiver: &mut BufferedVoleReceiver,
         channel: &mut SwankyChannel,
-    ) -> Result<(
-        BeDOZa,
-        Vec<BeDOZaSender>,
-        Vec<BeDOZaSender>,
-        Vec<BeDOZaReceiver>,
-    )> {
+        key_shares_out: &mut Option<BeDOZa>,
+        authenticated_xis_out: &mut Vec<BeDOZaSender>,
+        authenticated_ris_out: &mut Vec<BeDOZaSender>,
+        authenticated_pi_out: &mut Vec<BeDOZaReceiver>,
+    ) -> Result<()> {
         let start = std::time::Instant::now();
         let mut step = 0usize;
         let mut log_step = |description: &str| {
@@ -85,9 +84,9 @@ impl Inputer {
         log_step("authenticated k0 and received authenticated k1");
 
         // Inputer commits its local input values with VOLE under the shuffler's key delta_1.
-        let mut authenticated_xis = Vec::with_capacity(vals.len());
+        authenticated_xis_out.reserve(vals.len());
         vole_sender
-            .commit_auth_into(channel, vals, &mut authenticated_xis)
+            .commit_auth_into(channel, vals, authenticated_xis_out)
             .map_err(|e| anyhow!("Failed to authenticate input values: {e}"))?;
         log_step("authenticated input x_i values");
 
@@ -95,21 +94,19 @@ impl Inputer {
         let authenticated_ris = vole_sender
             .random_auth(channel, vals.len())
             .map_err(|e| anyhow!("Failed to authenticate random values: {e}"))?;
+        authenticated_ris_out.extend(authenticated_ris);
         log_step("sampled authenticated random r_i values");
 
         // Inputs receives authenticated permutation pi
-        let mut authenticated_pi = Vec::with_capacity(vals.len());
+        authenticated_pi_out.reserve(vals.len());
         vole_receiver
-            .commit_auth_into(channel, vals.len(), &mut authenticated_pi)
+            .commit_auth_into(channel, vals.len(), authenticated_pi_out)
             .map_err(|e| anyhow!("Failed to authenticate the permutation: {e}"))?;
         log_step("received authenticated permutation pi");
 
-        Ok((
-            BeDOZa::new(inputer_k0_sender, shuffler_k1_receiver, false),
-            authenticated_xis,
-            authenticated_ris,
-            authenticated_pi,
-        ))
+        *key_shares_out = Some(BeDOZa::new(inputer_k0_sender, shuffler_k1_receiver, false));
+
+        Ok(())
     }
 
     pub fn step1_inputer_authenticates_r_times_x_plus_k0_and_proves(
@@ -119,7 +116,8 @@ impl Inputer {
         authenticated_k0: &BeDOZaSender,
         vole_sender: &mut BufferedVoleSender,
         channel: &mut SwankyChannel,
-    ) -> Result<Vec<BeDOZaSender>> {
+        authenticated_r_times_x_plus_k0_out: &mut Vec<BeDOZaSender>,
+    ) -> Result<()> {
         let start = std::time::Instant::now();
         let mut step = 0usize;
         let mut log_step = |description: &str| {
@@ -144,19 +142,18 @@ impl Inputer {
             .collect();
         log_step("computed authenticated (x_i + k0) commitments");
 
-        let r_times_x_plus_k0_values: Vec<FE> = authenticated_ris
-            .iter()
-            .zip(authenticated_x_plus_k0.iter())
-            .map(|(&r_i, x_plus_k0_i)| r_i.val() * x_plus_k0_i.val())
-            .collect();
+        let mut r_times_x_plus_k0_values: Vec<FE> = Vec::with_capacity(authenticated_ris.len());
+        for (r_i, x_plus_k0_i) in authenticated_ris.iter().zip(authenticated_x_plus_k0.iter()) {
+            r_times_x_plus_k0_values.push(r_i.val() * x_plus_k0_i.val());
+        }
         log_step("computed clear r_i * (x_i + k0) values");
 
-        let mut authenticated_r_times_x_plus_k0 = Vec::with_capacity(r_times_x_plus_k0_values.len());
+        authenticated_r_times_x_plus_k0_out.reserve(r_times_x_plus_k0_values.len());
         vole_sender
             .commit_auth_into(
                 channel,
                 &r_times_x_plus_k0_values,
-                &mut authenticated_r_times_x_plus_k0,
+                authenticated_r_times_x_plus_k0_out,
             )
             .map_err(|e| anyhow!("Failed to authenticate ri*(xi + k0): {e}"))?;
         log_step("authenticated r_i * (x_i + k0) commitments");
@@ -164,13 +161,13 @@ impl Inputer {
         wolverine_batch_mul_prove(
             authenticated_ris,
             &authenticated_x_plus_k0,
-            &authenticated_r_times_x_plus_k0,
+            authenticated_r_times_x_plus_k0_out,
             vole_sender,
             channel,
         )?;
         log_step("proved multiplication relation with Wolverine");
 
-        Ok(authenticated_r_times_x_plus_k0)
+        Ok(())
     }
 
     pub fn step2_vole_share_r_times_k1_and_authenticate(
@@ -566,22 +563,32 @@ impl Inputer {
         channel: &mut SwankyChannel,
     ) -> Result<InputerOutput> {
         ensure!(!x_values.is_empty(), "run_full_shuffled_oprf: empty input");
-        let (key_shares, authenticated_xi, authenticated_ri, authenticated_pi) = self
-            .step0_authenticate_oprf_key_and_xi_and_ri_and_receive_pi(
-                x_values,
-                auth_vole_sender,
-                auth_vole_receiver,
-                channel,
-            )?;
+        let mut key_shares = None;
+        let mut authenticated_xi = Vec::with_capacity(x_values.len());
+        let mut authenticated_ri = Vec::with_capacity(x_values.len());
+        let mut authenticated_pi = Vec::with_capacity(x_values.len());
+        self.step0_authenticate_oprf_key_and_xi_and_ri_and_receive_pi(
+            x_values,
+            auth_vole_sender,
+            auth_vole_receiver,
+            channel,
+            &mut key_shares,
+            &mut authenticated_xi,
+            &mut authenticated_ri,
+            &mut authenticated_pi,
+        )?;
+        let key_shares =
+            key_shares.ok_or_else(|| anyhow!("step0 did not produce key shares"))?;
 
-        let authenticated_r_x_plus_k0 = self
-            .step1_inputer_authenticates_r_times_x_plus_k0_and_proves(
-                &authenticated_xi,
-                &authenticated_ri,
-                key_shares.bedoza_sender(),
-                auth_vole_sender,
-                channel,
-            )?;
+        let mut authenticated_r_x_plus_k0 = Vec::with_capacity(x_values.len());
+        self.step1_inputer_authenticates_r_times_x_plus_k0_and_proves(
+            &authenticated_xi,
+            &authenticated_ri,
+            key_shares.bedoza_sender(),
+            auth_vole_sender,
+            channel,
+            &mut authenticated_r_x_plus_k0,
+        )?;
 
         let (_u_values, authenticated_u, authenticated_v) = self
             .step2_vole_share_r_times_k1_and_authenticate(

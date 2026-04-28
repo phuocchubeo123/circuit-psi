@@ -119,19 +119,24 @@ fn main() -> Result<()> {
         Ok(random_permutation(args.n, &mut perm_rng))
     })?;
 
-    let (
-        shuffler_key_share,
-        authenticated_inputs,
-        authenticated_ri_receiver,
-        authenticated_pi_sender,
-    ) = timed_channel("step0", &mut channel, |channel| {
+    let mut shuffler_key_share = None;
+    let mut authenticated_inputs = Vec::with_capacity(permutation.len());
+    let mut authenticated_ri_receiver = Vec::with_capacity(permutation.len());
+    let mut authenticated_pi_sender = Vec::with_capacity(permutation.len());
+    timed_channel("step0", &mut channel, |channel| {
         shuffler.step0_authenticate_oprf_key_and_xi_and_ri_and_send_pi(
             &permutation,
             &mut auth_vole_sender,
             &mut auth_vole_receiver,
             channel,
+            &mut shuffler_key_share,
+            &mut authenticated_inputs,
+            &mut authenticated_ri_receiver,
+            &mut authenticated_pi_sender,
         )
     })?;
+    let shuffler_key_share =
+        shuffler_key_share.ok_or_else(|| anyhow!("step0 did not produce key share"))?;
 
     let mut k1_mul_vole_receiver =
         timed_channel("init_k1_mul_vole_receiver", &mut channel, |channel| {
@@ -139,13 +144,15 @@ fn main() -> Result<()> {
             .map_err(|e| anyhow!("init k1 mul receiver VOLE failed: {}", e))
     })?;
 
-    let authenticated_r_x_plus_k0_receiver = timed_channel("step1", &mut channel, |channel| {
+    let mut authenticated_r_x_plus_k0_receiver = Vec::with_capacity(permutation.len());
+    timed_channel("step1", &mut channel, |channel| {
         shuffler.step1_inputer_authenticates_r_times_x_plus_k0_and_verifies(
             &authenticated_inputs,
             &authenticated_ri_receiver,
             &shuffler_key_share,
             &mut auth_vole_receiver,
             channel,
+            &mut authenticated_r_x_plus_k0_receiver,
         )
     })?;
 

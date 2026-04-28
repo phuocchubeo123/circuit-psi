@@ -106,28 +106,38 @@ fn main() -> Result<()> {
         random_fe_vec_from_rng(&mut rng, args.n).context("generate input set")
     })?;
 
-    let (key_shares, authenticated_xi, authenticated_ri, authenticated_pi) =
-        timed_channel("step0", &mut channel, |channel| {
-            inputer.step0_authenticate_oprf_key_and_xi_and_ri_and_receive_pi(
-                &x_values,
-                &mut auth_vole_sender,
-                &mut auth_vole_receiver,
-                channel,
-            )
-        })?;
+    let mut key_shares = None;
+    let mut authenticated_xi = Vec::with_capacity(x_values.len());
+    let mut authenticated_ri = Vec::with_capacity(x_values.len());
+    let mut authenticated_pi = Vec::with_capacity(x_values.len());
+    timed_channel("step0", &mut channel, |channel| {
+        inputer.step0_authenticate_oprf_key_and_xi_and_ri_and_receive_pi(
+            &x_values,
+            &mut auth_vole_sender,
+            &mut auth_vole_receiver,
+            channel,
+            &mut key_shares,
+            &mut authenticated_xi,
+            &mut authenticated_ri,
+            &mut authenticated_pi,
+        )
+    })?;
+    let key_shares = key_shares.ok_or_else(|| anyhow!("step0 did not produce key shares"))?;
 
     let mut k1_mul_vole_sender = timed_channel("init_k1_mul_vole_sender", &mut channel, |channel| {
         BufferedVoleSender::init(channel, LPN21)
             .map_err(|e| anyhow!("init k1 mul sender VOLE failed: {}", e))
     })?;
 
-    let authenticated_r_x_plus_k0 = timed_channel("step1", &mut channel, |channel| {
+    let mut authenticated_r_x_plus_k0 = Vec::with_capacity(x_values.len());
+    timed_channel("step1", &mut channel, |channel| {
         inputer.step1_inputer_authenticates_r_times_x_plus_k0_and_proves(
             &authenticated_xi,
             &authenticated_ri,
             key_shares.bedoza_sender(),
             &mut auth_vole_sender,
             channel,
+            &mut authenticated_r_x_plus_k0,
         )
     })?;
 

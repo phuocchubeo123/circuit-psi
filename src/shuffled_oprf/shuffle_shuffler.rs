@@ -98,12 +98,11 @@ impl Shuffler {
         vole_sender: &mut BufferedVoleSender,
         vole_receiver: &mut BufferedVoleReceiver,
         channel: &mut SwankyChannel,
-    ) -> Result<(
-        BeDOZa,
-        Vec<BeDOZaReceiver>,
-        Vec<BeDOZaReceiver>,
-        Vec<BeDOZaSender>,
-    )> {
+        shuffler_key_share_out: &mut Option<BeDOZa>,
+        authenticated_xis_out: &mut Vec<BeDOZaReceiver>,
+        authenticated_ris_out: &mut Vec<BeDOZaReceiver>,
+        authenticated_pi_sender_out: &mut Vec<BeDOZaSender>,
+    ) -> Result<()> {
         let n = permutation.len();
         let start = std::time::Instant::now();
         let mut step = 0usize;
@@ -131,15 +130,16 @@ impl Shuffler {
         log_step("received authenticated k0 and authenticated k1");
 
         // 0.2) Receive authenticated x_i and r_i from inputer under delta_1.
-        let mut authenticated_xis: Vec<BeDOZaReceiver> = Vec::with_capacity(n);
+        authenticated_xis_out.reserve(n);
         vole_receiver
-            .commit_auth_into(channel, n, &mut authenticated_xis)
+            .commit_auth_into(channel, n, authenticated_xis_out)
             .map_err(|e| anyhow!("failed to materialize receiver VOLE outputs: {e}"))?;
         log_step("received authenticated input x_i values");
 
         let authenticated_ris: Vec<BeDOZaReceiver> = vole_receiver
             .random_auth(channel, n)
             .map_err(|e| anyhow!("failed to receive authenticated r_i values: {e}"))?;
+        authenticated_ris_out.extend(authenticated_ris);
         log_step("received authenticated random r_i values");
 
         // 0.3) Authenticate permutation values under inputer key delta_0.
@@ -147,18 +147,15 @@ impl Shuffler {
             .iter()
             .map(|&idx| FE::from(idx as u64))
             .collect();
-        let mut authenticated_pi_sender: Vec<BeDOZaSender> = Vec::with_capacity(n);
+        authenticated_pi_sender_out.reserve(n);
         vole_sender
-            .commit_auth_into(channel, &permutation_fe, &mut authenticated_pi_sender)
+            .commit_auth_into(channel, &permutation_fe, authenticated_pi_sender_out)
             .map_err(|e| anyhow!("failed to materialize sender VOLE inputs: {e}"))?;
         log_step("authenticated and sent permutation pi values");
 
-        Ok((
-            shuffler_key_share,
-            authenticated_xis,
-            authenticated_ris,
-            authenticated_pi_sender,
-        ))
+        *shuffler_key_share_out = Some(shuffler_key_share);
+
+        Ok(())
     }
 
     pub fn step1_inputer_authenticates_r_times_x_plus_k0_and_verifies(
@@ -168,7 +165,8 @@ impl Shuffler {
         shuffler_key_share: &BeDOZa,
         vole_receiver: &mut BufferedVoleReceiver,
         channel: &mut SwankyChannel,
-    ) -> Result<Vec<BeDOZaReceiver>> {
+        product_commitments_out: &mut Vec<BeDOZaReceiver>,
+    ) -> Result<()> {
         let start = std::time::Instant::now();
         let mut step = 0usize;
         let mut log_step = |description: &str| {
@@ -196,13 +194,12 @@ impl Shuffler {
             .collect();
         log_step("computed authenticated (x_i + k0) commitments");
 
-        let mut product_commitments: Vec<BeDOZaReceiver> =
-            Vec::with_capacity(authenticated_inputs.len());
+        product_commitments_out.reserve(authenticated_inputs.len());
         vole_receiver
             .commit_auth_into(
                 channel,
                 authenticated_inputs.len(),
-                &mut product_commitments,
+                product_commitments_out,
             )
             .map_err(|e| anyhow!("failed to materialize receiver VOLE outputs: {e}"))?;
         log_step("received authenticated r_i * (x_i + k0) commitments");
@@ -210,13 +207,13 @@ impl Shuffler {
         wolverine_batch_mul_verify(
             authenticated_ri_receiver,
             &x_plus_k0_commitments,
-            &product_commitments,
+            product_commitments_out,
             vole_receiver,
             channel,
         )?;
         log_step("verified multiplication relation with Wolverine");
 
-        Ok(product_commitments)
+        Ok(())
     }
 
     pub fn step2_vole_share_r_times_k1_and_authenticate(
@@ -639,25 +636,31 @@ impl Shuffler {
             !permutation.is_empty(),
             "run_full_shuffled_oprf: permutation cannot be empty"
         );
-        let (
-            shuffler_key_share,
-            authenticated_inputs,
-            authenticated_ri_receiver,
-            authenticated_pi_sender,
-        ) = self.step0_authenticate_oprf_key_and_xi_and_ri_and_send_pi(
+        let mut shuffler_key_share = None;
+        let mut authenticated_inputs = Vec::with_capacity(permutation.len());
+        let mut authenticated_ri_receiver = Vec::with_capacity(permutation.len());
+        let mut authenticated_pi_sender = Vec::with_capacity(permutation.len());
+        self.step0_authenticate_oprf_key_and_xi_and_ri_and_send_pi(
             permutation,
             auth_vole_sender,
             auth_vole_receiver,
             channel,
+            &mut shuffler_key_share,
+            &mut authenticated_inputs,
+            &mut authenticated_ri_receiver,
+            &mut authenticated_pi_sender,
         )?;
-        let authenticated_r_x_plus_k0_receiver = self
-            .step1_inputer_authenticates_r_times_x_plus_k0_and_verifies(
-                &authenticated_inputs,
-                &authenticated_ri_receiver,
-                &shuffler_key_share,
-                auth_vole_receiver,
-                channel,
-            )?;
+        let shuffler_key_share =
+            shuffler_key_share.ok_or_else(|| anyhow!("step0 did not produce key share"))?;
+        let mut authenticated_r_x_plus_k0_receiver = Vec::with_capacity(permutation.len());
+        self.step1_inputer_authenticates_r_times_x_plus_k0_and_verifies(
+            &authenticated_inputs,
+            &authenticated_ri_receiver,
+            &shuffler_key_share,
+            auth_vole_receiver,
+            channel,
+            &mut authenticated_r_x_plus_k0_receiver,
+        )?;
         let (v_values, authenticated_u_receiver, authenticated_v_sender) = self
             .step2_vole_share_r_times_k1_and_authenticate(
                 &authenticated_ri_receiver,
