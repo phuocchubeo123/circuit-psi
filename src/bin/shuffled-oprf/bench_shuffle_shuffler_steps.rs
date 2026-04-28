@@ -9,13 +9,12 @@ use circuit_psi::{
     },
 };
 use clap::{Args, Parser};
-use rand::{Rng, RngExt, SeedableRng, rngs::StdRng};
+use rand::{Rng, RngExt};
 use std::time::Instant;
 
 const DEFAULT_N: usize = 1000;
 const DEFAULT_SENDER_ADDR: &str = "127.0.0.1";
 const DEFAULT_SENDER_PORT: u16 = 23000;
-const SHUFFLER_RNG_SEED: [u8; 32] = [42u8; 32];
 
 #[derive(Debug, Clone, Args)]
 struct NetworkArgs {
@@ -112,7 +111,6 @@ fn main() -> Result<()> {
             .map_err(|e| anyhow!("init auth sender VOLE failed: {}", e))
     })?;
     let shuffler = Shuffler::new(delta_1, shuffler_vole_key);
-    let mut protocol_rng = StdRng::from_seed(SHUFFLER_RNG_SEED);
     let mut perm_rng = rand::rng();
 
     let permutation = timed("generate_permutation", || {
@@ -176,7 +174,6 @@ fn main() -> Result<()> {
             &v_values,
             &authenticated_v_sender,
             &mut auth_vole_sender,
-            &mut protocol_rng,
             channel,
         )
     })?;

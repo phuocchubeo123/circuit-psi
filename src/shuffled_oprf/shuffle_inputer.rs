@@ -264,6 +264,12 @@ impl Inputer {
             !authenticated_r_times_x_plus_k0_sender.is_empty(),
             "step3 cannot run on empty commitments"
         );
+        ensure!(
+            authenticated_r_times_x_plus_k0_sender.len() == authenticated_vs.len(),
+            "step3 length mismatch: r(x+k0) commitments {} vs v commitments {}",
+            authenticated_r_times_x_plus_k0_sender.len(),
+            authenticated_vs.len()
+        );
 
         let authenticated_r_times_x_plus_k: Vec<BeDOZaSender> =
             authenticated_r_times_x_plus_k0_sender
@@ -275,75 +281,30 @@ impl Inputer {
         send_open_shares(&authenticated_r_times_x_plus_k, channel)
             .map_err(|e| anyhow!("Failed to open ri*(xi+k0)+ui: {e}"))?;
 
-        // 2) Receive reauthentication
-        // Receive shuffler's reauthentication of y_i := r_i*(x_i+k) under delta_0.
-        let mut reauthenticated_r_x_k_receiver =
-            Vec::with_capacity(authenticated_r_times_x_plus_k.len());
-        vole_receiver
-            .commit_auth_into(
-                channel,
-                authenticated_r_times_x_plus_k.len(),
-                &mut reauthenticated_r_x_k_receiver,
-            )
-            .map_err(|e| anyhow!("Failed to receive reauthentication of ri*(xi+k): {e}"))?;
-
-        // Shuffler chooses seed for batched sacrifice check.
-        let mut seed = [0u8; 32];
-        let seed_bytes = channel
-            .receive()
-            .map_err(|e| anyhow!("step8 failed to receive seed: {}", e))?;
-        seed.copy_from_slice(&seed_bytes);
-        let mut seeded_rng = StdRng::from_seed(seed);
-        let coeffs = random_fe_vec_from_rng(&mut seeded_rng, authenticated_r_times_x_plus_k.len())?;
-
-        let reauth_linear = linear_comb_receiver(
-            &reauthenticated_r_x_k_receiver,
-            &coeffs,
-            "step3 reauthenticated linear comb",
-        )
-        .map_err(|e| {
-            anyhow!("Failed to compute linear combination of reauthenticated ri*(xi+k): {e}")
-        })?;
-        let v_linear = linear_comb_receiver(
-            &authenticated_vs,
-            &coeffs,
-            "step3 authenticated v linear comb",
-        )
-        .map_err(|e| anyhow!("Failed to compute linear combination of authenticated vi: {e}"))?;
-        let auth_linear = linear_comb_sender(
-            &authenticated_r_times_x_plus_k,
-            &coeffs,
-            "step3 authenticated linear comb",
-        )
-        .map_err(|e| {
-            anyhow!("Failed to compute linear combination of authenticated ri*(xi+k): {e}")
-        })?;
-
-        // Simply open the new random linear combination and compare with the old one.
-        let opened = receive_open_shares(&[reauth_linear, v_linear], channel)?;
-        let opened_reauth_linear = opened[0];
-        let opened_v_linear = opened[1];
-
-        ensure!(
-            opened_reauth_linear == auth_linear.val() + opened_v_linear,
-            "step8 consistency check failed: reauth batch != opened r(x+k0)+u batch + v batch"
-        );
+        // 2) Locally derive authenticated y_i := r_i*(x_i+k) under delta_0 from the
+        // already-authenticated v_i under delta_0 and opened (r_i*(x_i+k0)+u_i) values.
+        // Since inputer is the sender for r_i*(x_i+k0)+u_i, it already knows these opened values.
+        let authenticated_r_x_k_receiver: Vec<BeDOZaReceiver> = authenticated_vs
+            .iter()
+            .zip(authenticated_r_times_x_plus_k.iter())
+            .map(|(v_i, opened_term)| *v_i + opened_term.val())
+            .collect();
 
         // 3) Also receive and verify inverse
         // Prove y_i * y_i^{-1} = 1 with Wolverine (public-output multiplication).
         let mut authenticated_r_x_k_inverse =
-            Vec::with_capacity(reauthenticated_r_x_k_receiver.len());
+            Vec::with_capacity(authenticated_r_x_k_receiver.len());
         vole_receiver
             .commit_auth_into(
                 channel,
-                reauthenticated_r_x_k_receiver.len(),
+                authenticated_r_x_k_receiver.len(),
                 &mut authenticated_r_x_k_inverse,
             )
             .map_err(|e| anyhow!("Failed to receive authenticated inverses of ri*(xi+k): {e}"))?;
         let public_ones = vec![FE::one(); authenticated_r_x_k_inverse.len()];
         wolverine_batch_mul_public_output_verify(
             &authenticated_r_x_k_inverse,
-            &reauthenticated_r_x_k_receiver,
+            &authenticated_r_x_k_receiver,
             &public_ones,
             vole_receiver,
             channel,

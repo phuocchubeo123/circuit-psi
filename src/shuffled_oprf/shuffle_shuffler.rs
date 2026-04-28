@@ -307,14 +307,13 @@ impl Shuffler {
         Ok((v_values, authenticated_u_receiver, authenticated_v_sender))
     }
 
-    pub fn step3_receive_ri_x_plus_k0_plus_ui_and_receive_reauthenticate_and_inverse<RNG: Rng>(
+    pub fn step3_receive_ri_x_plus_k0_plus_ui_and_receive_reauthenticate_and_inverse(
         &self,
         authenticated_r_x_plus_k0_receiver: &[BeDOZaReceiver],
         authenticated_u_receiver: &[BeDOZaReceiver],
         v_values: &[FE],
         authenticated_v_sender: &[BeDOZaSender],
         auth_vole_sender: &mut BufferedVoleSender,
-        rng: &mut RNG,
         channel: &mut SwankyChannel,
     ) -> Result<(Vec<FE>, Vec<FE>, Vec<BeDOZaSender>)> {
         ensure!(
@@ -353,24 +352,13 @@ impl Shuffler {
             .map(|(&opened_term, &v_i)| opened_term + v_i)
             .collect();
 
-        // 3.2) Reauthenticate r_i(x_i+k) under inputer key delta_0, with sacrifice check.
-        let mut authenticated_r_x_k_sender = Vec::with_capacity(r_x_k_values.len());
-        auth_vole_sender
-            .commit_auth_into(channel, &r_x_k_values, &mut authenticated_r_x_k_sender)
-            .map_err(|e| anyhow!("failed to materialize sender VOLE inputs: {e}"))?;
-        let seed: [u8; 32] = rng.random::<[u8; 32]>();
-        channel
-            .send(&seed)
-            .map_err(|e| anyhow!("step3 failed to send seed: {}", e))?;
-        let mut seeded_rng = StdRng::from_seed(seed);
-        let coeffs = random_fe_vec_from_rng(&mut seeded_rng, r_x_k_values.len())?;
-        let reauth_linear = linear_comb_sender(
-            &authenticated_r_x_k_sender,
-            &coeffs,
-            "step3 reauthenticated linear comb",
-        )?;
-        let v_linear = linear_comb_sender(authenticated_v_sender, &coeffs, "step3 v linear comb")?;
-        send_open_shares(&[reauth_linear, v_linear], channel)?;
+        // 3.2) Derive authenticated y_i := r_i*(x_i+k) under inputer key delta_0 without
+        // re-authenticating the full vector: y_i = opened(r_i*(x_i+k0)+u_i) + v_i.
+        let authenticated_r_x_k_sender: Vec<BeDOZaSender> = authenticated_v_sender
+            .iter()
+            .zip(opened_r_x_k0_plus_u.iter())
+            .map(|(v_i, &opened_term)| *v_i + opened_term)
+            .collect();
 
         // 3.3) Authenticate inverses and prove r_i(x_i+k) * inv_i = 1 in batch.
         let inverse_values =
@@ -632,7 +620,7 @@ impl Shuffler {
     pub fn run_full_shuffled_oprf<RNG: Rng>(
         &self,
         permutation: &[usize],
-        rng: &mut RNG,
+        _rng: &mut RNG,
         auth_vole_sender: &mut BufferedVoleSender,
         auth_vole_receiver: &mut BufferedVoleReceiver,
         k1_mul_vole_receiver: &mut BufferedVoleReceiver,
@@ -683,7 +671,6 @@ impl Shuffler {
                 &v_values,
                 &authenticated_v_sender,
                 auth_vole_sender,
-                rng,
                 channel,
             )?;
 
