@@ -112,13 +112,15 @@ pub fn batch_multiply(
     };
 
     let mut out = Vec::with_capacity(n);
-    for ((((triple_share, &d_sender_value), &d_receiver_value), &e_sender_value), &e_receiver_value) in
-        triple_shares
-            .iter()
-            .zip(d_sender_values.iter())
-            .zip(d_receiver_values.iter())
-            .zip(e_sender_values.iter())
-            .zip(e_receiver_values.iter())
+    for (
+        (((triple_share, &d_sender_value), &d_receiver_value), &e_sender_value),
+        &e_receiver_value,
+    ) in triple_shares
+        .iter()
+        .zip(d_sender_values.iter())
+        .zip(d_receiver_values.iter())
+        .zip(e_sender_values.iter())
+        .zip(e_receiver_values.iter())
     {
         let d = d_sender_value + d_receiver_value;
         let e = e_sender_value + e_receiver_value;

@@ -14,7 +14,10 @@ use anyhow::{Result, anyhow, ensure};
 use rand::Rng;
 
 fn filter_nonzero(values: Vec<FE>) -> Vec<FE> {
-    values.into_iter().filter(|value| *value != FE::zero()).collect()
+    values
+        .into_iter()
+        .filter(|value| *value != FE::zero())
+        .collect()
 }
 
 pub struct OneSidePsuSender {

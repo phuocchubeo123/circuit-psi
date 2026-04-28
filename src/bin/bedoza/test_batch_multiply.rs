@@ -321,11 +321,15 @@ fn run_party(args: &Args) -> Result<()> {
     let local_x_senders = sample_sender_shares(args.n, side, &mut rng);
     let local_y_senders = sample_sender_shares(args.n, side, &mut rng);
 
-    let (peer_x_values, peer_x_pads) = exchange_sender_shares(&local_x_senders, side, &mut channel)?;
-    let (peer_y_values, peer_y_pads) = exchange_sender_shares(&local_y_senders, side, &mut channel)?;
+    let (peer_x_values, peer_x_pads) =
+        exchange_sender_shares(&local_x_senders, side, &mut channel)?;
+    let (peer_y_values, peer_y_pads) =
+        exchange_sender_shares(&local_y_senders, side, &mut channel)?;
 
-    let x_shares = build_bedoza_inputs(&local_x_senders, &peer_x_values, &peer_x_pads, delta, side)?;
-    let y_shares = build_bedoza_inputs(&local_y_senders, &peer_y_values, &peer_y_pads, delta, side)?;
+    let x_shares =
+        build_bedoza_inputs(&local_x_senders, &peer_x_values, &peer_x_pads, delta, side)?;
+    let y_shares =
+        build_bedoza_inputs(&local_y_senders, &peer_y_values, &peer_y_pads, delta, side)?;
 
     let expected_products: Vec<FE> = local_x_senders
         .iter()
@@ -352,12 +356,7 @@ fn run_party(args: &Args) -> Result<()> {
 
     println!(
         "batch_multiply_ok side={:?} addr={} n={} timing_ms={} bytes_sent={} bytes_received={}",
-        args.side,
-        addr,
-        args.n,
-        multiply_time,
-        multiply_bytes_sent,
-        multiply_bytes_received,
+        args.side, addr, args.n, multiply_time, multiply_bytes_sent, multiply_bytes_received,
     );
 
     Ok(())

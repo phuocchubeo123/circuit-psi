@@ -1,11 +1,11 @@
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use circuit_psi::{
-    bedoza::{bedoza_receiver::BeDOZaReceiver, bedoza_sender::BeDOZaSender, BeDOZa, BeDOZaTriple},
+    bedoza::{BeDOZa, BeDOZaTriple, bedoza_receiver::BeDOZaReceiver, bedoza_sender::BeDOZaSender},
     math::defines::FE,
-    tcp_channel::{connect_with_retry, listen_to, SwankyChannel},
+    tcp_channel::{SwankyChannel, connect_with_retry, listen_to},
 };
 use clap::{Parser, ValueEnum};
-use rand::{rngs::StdRng, Rng, RngExt, SeedableRng};
+use rand::{Rng, RngExt, SeedableRng, rngs::StdRng};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File},

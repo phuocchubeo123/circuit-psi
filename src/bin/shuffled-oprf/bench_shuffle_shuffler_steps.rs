@@ -48,10 +48,7 @@ fn random_permutation(n: usize, rng: &mut impl Rng) -> Vec<usize> {
     p
 }
 
-fn timed<T, F>(
-    label: &str,
-    f: F,
-) -> Result<T>
+fn timed<T, F>(label: &str, f: F) -> Result<T>
 where
     F: FnOnce() -> Result<T>,
 {
@@ -102,10 +99,11 @@ fn main() -> Result<()> {
         listen_to(&sender_socket).context("listen swanky channel")
     })?;
 
-    let mut auth_vole_receiver = timed_channel("init_auth_vole_receiver", &mut channel, |channel| {
-        BufferedVoleReceiver::init(channel, delta_1, LPN21)
-            .map_err(|e| anyhow!("init auth receiver VOLE failed: {}", e))
-    })?;
+    let mut auth_vole_receiver =
+        timed_channel("init_auth_vole_receiver", &mut channel, |channel| {
+            BufferedVoleReceiver::init(channel, delta_1, LPN21)
+                .map_err(|e| anyhow!("init auth receiver VOLE failed: {}", e))
+        })?;
     let mut auth_vole_sender = timed_channel("init_auth_vole_sender", &mut channel, |channel| {
         BufferedVoleSender::init(channel, LPN21)
             .map_err(|e| anyhow!("init auth sender VOLE failed: {}", e))
@@ -138,9 +136,9 @@ fn main() -> Result<()> {
 
     let mut k1_mul_vole_receiver =
         timed_channel("init_k1_mul_vole_receiver", &mut channel, |channel| {
-        BufferedVoleReceiver::init(channel, shuffler_vole_key, LPN21)
-            .map_err(|e| anyhow!("init k1 mul receiver VOLE failed: {}", e))
-    })?;
+            BufferedVoleReceiver::init(channel, shuffler_vole_key, LPN21)
+                .map_err(|e| anyhow!("init k1 mul receiver VOLE failed: {}", e))
+        })?;
 
     let mut authenticated_r_x_plus_k0_receiver = Vec::with_capacity(permutation.len());
     timed_channel("step1", &mut channel, |channel| {
@@ -156,27 +154,27 @@ fn main() -> Result<()> {
 
     let (v_values, authenticated_u_receiver, authenticated_v_sender) =
         timed_channel("step2", &mut channel, |channel| {
-        shuffler.step2_vole_share_r_times_k1_and_authenticate(
-            &authenticated_ri_receiver,
-            shuffler_key_share.bedoza_sender(),
-            &mut auth_vole_receiver,
-            &mut auth_vole_sender,
-            &mut k1_mul_vole_receiver,
-            channel,
-        )
-    })?;
+            shuffler.step2_vole_share_r_times_k1_and_authenticate(
+                &authenticated_ri_receiver,
+                shuffler_key_share.bedoza_sender(),
+                &mut auth_vole_receiver,
+                &mut auth_vole_sender,
+                &mut k1_mul_vole_receiver,
+                channel,
+            )
+        })?;
 
     let (_r_x_k_values, inverse_values, authenticated_inverse_sender) =
         timed_channel("step3", &mut channel, |channel| {
-        shuffler.step3_receive_ri_x_plus_k0_plus_ui_and_receive_reauthenticate_and_inverse(
-            &authenticated_r_x_plus_k0_receiver,
-            &authenticated_u_receiver,
-            &v_values,
-            &authenticated_v_sender,
-            &mut auth_vole_sender,
-            channel,
-        )
-    })?;
+            shuffler.step3_receive_ri_x_plus_k0_plus_ui_and_receive_reauthenticate_and_inverse(
+                &authenticated_r_x_plus_k0_receiver,
+                &authenticated_u_receiver,
+                &v_values,
+                &authenticated_v_sender,
+                &mut auth_vole_sender,
+                channel,
+            )
+        })?;
 
     let g_ri = timed_channel("step4", &mut channel, |channel| {
         shuffler.step4_receive_g_ri_and_verify_pad_consistency_proof(

@@ -1,8 +1,6 @@
 use circuit_psi::{
     bedoza::comm_util::{receive_fe_vec, send_fe_vec},
-    circuit_psi::mq_rpmt::{
-        MqRpmtReceiver, MqRpmtSender,
-    },
+    circuit_psi::mq_rpmt::{MqRpmtReceiver, MqRpmtSender},
     math::{defines::FE, scalar_field::fq},
     tcp_channel::{connect_with_retry, listen_to},
     utils::sets::sample_correlated_sets,
@@ -82,7 +80,6 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     let bytes_sent = channel.bytes_sent() - bytes_sent_before;
     let bytes_received = channel.bytes_received() - bytes_received_before;
     let elapsed_ms = start.elapsed().as_millis();
-
 
     let opened_bitmap = receive_fe_vec(&mut channel)
         .map_err(|e| eyre::eyre!("sender failed to receive shuffled bitmap: {e}"))?;

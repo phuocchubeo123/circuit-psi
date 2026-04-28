@@ -457,10 +457,9 @@ impl Inputer {
                 .iter()
                 .map(|bedoza_receiver| bedoza_receiver.tag()),
         );
-        let g_xi_times_inverse_tag_product =
-            msm_pippenger(g_ri, &tag_scratch).map_err(|e| {
-                anyhow!("Failed to get multi-exponentiation for g_xi_times_inverse tags: {e}")
-            })?;
+        let g_xi_times_inverse_tag_product = msm_pippenger(g_ri, &tag_scratch).map_err(|e| {
+            anyhow!("Failed to get multi-exponentiation for g_xi_times_inverse tags: {e}")
+        })?;
 
         tag_scratch.clear();
         tag_scratch.extend(
@@ -471,11 +470,10 @@ impl Inputer {
         let shuffled_oprf = receive_group_elements(channel)
             .map_err(|e| anyhow!("step15 failed to receive shuffled OPRF points: {}", e))?;
 
-        let shuffled_oprf_x_powers_tag_product =
-            msm_pippenger(&shuffled_oprf, &tag_scratch).map_err(|e| {
+        let shuffled_oprf_x_powers_tag_product = msm_pippenger(&shuffled_oprf, &tag_scratch)
+            .map_err(|e| {
                 anyhow!("Failed to get multi-exponentiation for shuffled_oprf^x_powers tags: {e}")
             })?;
-
 
         // 1) Receive and verify the left hand side
         // Shuffler sends [opened_left_product, pad_product] in one batch.
@@ -561,8 +559,7 @@ impl Inputer {
             &mut authenticated_ri,
             &mut authenticated_pi,
         )?;
-        let key_shares =
-            key_shares.ok_or_else(|| anyhow!("step0 did not produce key shares"))?;
+        let key_shares = key_shares.ok_or_else(|| anyhow!("step0 did not produce key shares"))?;
 
         let mut authenticated_r_x_plus_k0 = Vec::with_capacity(x_values.len());
         self.step1_inputer_authenticates_r_times_x_plus_k0_and_proves(
@@ -617,5 +614,4 @@ impl Inputer {
             authenticated_permutation: authenticated_pi,
         })
     }
-
 }

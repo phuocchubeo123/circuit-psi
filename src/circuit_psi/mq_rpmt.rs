@@ -6,7 +6,9 @@ use crate::{
         wolverine::{wolverine_batch_mul_prove, wolverine_batch_mul_verify},
     },
     math::{defines::FE, group::Group},
-    shuffled_oprf::{shuffle_inputer::Inputer, shuffle_shuffler::Shuffler},
+    shuffled_oprf::{
+        two_side_shuffle_inputer::TwoSideInputer, two_side_shuffle_shuffler::TwoSideShuffler,
+    },
     tcp_channel::SwankyChannel,
     vole::{
         vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
@@ -374,26 +376,20 @@ impl MqRpmtSender {
             "mq_rpmt sender requires at least 2 receiver inputs"
         );
 
-        let inputer = Inputer::new(self.delta0, self.k0);
-        let sender_oprf = inputer.run_full_shuffled_oprf(
-            sender_set,
-            rng,
-            &mut self.auth_vole_sender,
-            &mut self.auth_vole_receiver,
-            &mut self.product_vole_sender,
-            channel,
-        )?;
-
-        let shuffler = Shuffler::new(self.delta0, self.k0);
         let receiver_permutation = random_permutation(receiver_set_len, rng);
-        let receiver_oprf = shuffler.run_full_shuffled_oprf(
+        let two_side_runner = TwoSideInputer::new(self.delta0, self.k0);
+        let two_side_oprf = two_side_runner.run_full_two_side_shuffled_oprf(
+            sender_set,
             &receiver_permutation,
             rng,
             &mut self.auth_vole_sender,
             &mut self.auth_vole_receiver,
+            &mut self.product_vole_sender,
             &mut self.product_vole_receiver,
             channel,
         )?;
+        let sender_oprf = two_side_oprf.inputer_output;
+        let receiver_oprf = two_side_oprf.shuffler_output;
 
         let receiver_oprf_set = group_set(&receiver_oprf.shuffled_oprf);
         let shuffled_bitmap = membership_bitmap(&sender_oprf.shuffled_oprf, &receiver_oprf_set);
@@ -417,7 +413,6 @@ impl MqRpmtSender {
             shuffled_bitmap,
         })
     }
-
 }
 
 pub struct MqRpmtReceiver {
@@ -475,25 +470,19 @@ impl MqRpmtReceiver {
         );
 
         let sender_permutation = random_permutation(sender_set_len, rng);
-        let shuffler = Shuffler::new(self.delta1, self.k1);
-        let sender_oprf = shuffler.run_full_shuffled_oprf(
+        let two_side_runner = TwoSideShuffler::new(self.delta1, self.k1);
+        let two_side_oprf = two_side_runner.run_full_two_side_shuffled_oprf(
             &sender_permutation,
-            rng,
-            &mut self.auth_vole_sender,
-            &mut self.auth_vole_receiver,
-            &mut self.product_vole_receiver,
-            channel,
-        )?;
-
-        let inputer = Inputer::new(self.delta1, self.k1);
-        let receiver_oprf = inputer.run_full_shuffled_oprf(
             receiver_set,
             rng,
             &mut self.auth_vole_sender,
             &mut self.auth_vole_receiver,
+            &mut self.product_vole_receiver,
             &mut self.product_vole_sender,
             channel,
         )?;
+        let sender_oprf = two_side_oprf.shuffler_output;
+        let receiver_oprf = two_side_oprf.inputer_output;
 
         let receiver_oprf_set = group_set(&receiver_oprf.shuffled_oprf);
         let original_bitmap = membership_bitmap(&sender_oprf.unshuffled_oprf, &receiver_oprf_set);
@@ -518,7 +507,6 @@ impl MqRpmtReceiver {
             shuffled_bitmap,
         })
     }
-
 }
 
 fn exchange_set_size(local_len: usize, channel: &mut SwankyChannel) -> Result<usize> {

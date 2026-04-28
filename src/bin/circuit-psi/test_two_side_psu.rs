@@ -159,7 +159,9 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
         receiver_difference_size: receiver_difference.len(),
         union_size: union.len(),
         bytes_sent: channel.bytes_sent().saturating_sub(bytes_sent_before),
-        bytes_received: channel.bytes_received().saturating_sub(bytes_received_before),
+        bytes_received: channel
+            .bytes_received()
+            .saturating_sub(bytes_received_before),
         elapsed_ms: start.elapsed().as_millis(),
     })
 }
@@ -238,7 +240,9 @@ fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
         receiver_difference_size: expected_receiver_difference.len(),
         union_size: union.len(),
         bytes_sent: channel.bytes_sent().saturating_sub(bytes_sent_before),
-        bytes_received: channel.bytes_received().saturating_sub(bytes_received_before),
+        bytes_received: channel
+            .bytes_received()
+            .saturating_sub(bytes_received_before),
         elapsed_ms: start.elapsed().as_millis(),
     })
 }

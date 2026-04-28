@@ -18,8 +18,9 @@ const DEFAULT_SEED: u64 = 42;
 struct FourQModulus;
 
 impl IsModulus<U256> for FourQModulus {
-    const MODULUS: U256 =
-        U256::from_hex_unchecked("0029cbc14e5e0a72f05397829cbc14e5dfbd004dfe0f79992fb2540ec7768ce7");
+    const MODULUS: U256 = U256::from_hex_unchecked(
+        "0029cbc14e5e0a72f05397829cbc14e5dfbd004dfe0f79992fb2540ec7768ce7",
+    );
 }
 
 type FourQLambdaField = MontgomeryBackendPrimeField<FourQModulus, 4>;
@@ -47,7 +48,12 @@ fn main() -> Result<()> {
 }
 
 fn sample_fe(rng: &mut StdRng) -> FE {
-    let limbs = [rng.next_u64(), rng.next_u64(), rng.next_u64(), rng.next_u64()];
+    let limbs = [
+        rng.next_u64(),
+        rng.next_u64(),
+        rng.next_u64(),
+        rng.next_u64(),
+    ];
     let repr = U256::from_limbs(limbs);
     FE::from(&repr)
 }

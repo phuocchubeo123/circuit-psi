@@ -89,15 +89,14 @@ fn main() -> Result<()> {
 
     let total_start = Instant::now();
 
-
     let mut auth_vole_sender = timed_channel("init_auth_vole_sender", &mut channel, |channel| {
         BufferedVoleSender::init(channel, LPN21)
             .map_err(|e| anyhow!("init auth sender VOLE failed: {}", e))
     })?;
     let mut auth_vole_receiver =
         timed_channel("init_auth_vole_receiver", &mut channel, |channel| {
-        BufferedVoleReceiver::init(channel, -delta_0, LPN21)
-            .map_err(|e| anyhow!("init auth receiver VOLE failed: {}", e))
+            BufferedVoleReceiver::init(channel, -delta_0, LPN21)
+                .map_err(|e| anyhow!("init auth receiver VOLE failed: {}", e))
         })?;
     let inputer = Inputer::new(delta_0, inputer_vole_key);
     let mut rng = rand::rng();
@@ -124,10 +123,11 @@ fn main() -> Result<()> {
     })?;
     let key_shares = key_shares.ok_or_else(|| anyhow!("step0 did not produce key shares"))?;
 
-    let mut k1_mul_vole_sender = timed_channel("init_k1_mul_vole_sender", &mut channel, |channel| {
-        BufferedVoleSender::init(channel, LPN21)
-            .map_err(|e| anyhow!("init k1 mul sender VOLE failed: {}", e))
-    })?;
+    let mut k1_mul_vole_sender =
+        timed_channel("init_k1_mul_vole_sender", &mut channel, |channel| {
+            BufferedVoleSender::init(channel, LPN21)
+                .map_err(|e| anyhow!("init k1 mul sender VOLE failed: {}", e))
+        })?;
 
     let mut authenticated_r_x_plus_k0 = Vec::with_capacity(x_values.len());
     timed_channel("step1", &mut channel, |channel| {
@@ -141,16 +141,17 @@ fn main() -> Result<()> {
         )
     })?;
 
-    let (_u_values, authenticated_u, authenticated_v) = timed_channel("step2", &mut channel, |channel| {
-        inputer.step2_vole_share_r_times_k1_and_authenticate(
-            &authenticated_ri,
-            key_shares.bedoza_receiver(),
-            &mut auth_vole_sender,
-            &mut auth_vole_receiver,
-            &mut k1_mul_vole_sender,
-            channel,
-        )
-    })?;
+    let (_u_values, authenticated_u, authenticated_v) =
+        timed_channel("step2", &mut channel, |channel| {
+            inputer.step2_vole_share_r_times_k1_and_authenticate(
+                &authenticated_ri,
+                key_shares.bedoza_receiver(),
+                &mut auth_vole_sender,
+                &mut auth_vole_receiver,
+                &mut k1_mul_vole_sender,
+                channel,
+            )
+        })?;
 
     let authenticated_r_x_k_inverse = timed_channel("step3", &mut channel, |channel| {
         inputer.step3_open_ri_x_plus_k0_plus_ui_and_receive_reauthenticate(

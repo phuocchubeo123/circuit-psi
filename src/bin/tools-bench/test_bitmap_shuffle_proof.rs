@@ -46,10 +46,19 @@ fn random_permutation<R: Rng>(n: usize, rng: &mut R) -> Vec<usize> {
 fn sample_shuffle_instance(seed: [u8; 32], len: usize) -> (Vec<FE>, Vec<usize>, Vec<FE>) {
     let mut rng = StdRng::from_seed(seed);
     let original_bitmap: Vec<FE> = (0..len)
-        .map(|_| if rng.random::<bool>() { FE::one() } else { FE::zero() })
+        .map(|_| {
+            if rng.random::<bool>() {
+                FE::one()
+            } else {
+                FE::zero()
+            }
+        })
         .collect();
     let permutation = random_permutation(len, &mut rng);
-    let shuffled_bitmap: Vec<FE> = permutation.iter().map(|&idx| original_bitmap[idx]).collect();
+    let shuffled_bitmap: Vec<FE> = permutation
+        .iter()
+        .map(|&idx| original_bitmap[idx])
+        .collect();
     (original_bitmap, permutation, shuffled_bitmap)
 }
 
@@ -114,7 +123,8 @@ fn verifier_party(addr: &str, len: usize) -> eyre::Result<()> {
     let mut shared_seed = [0u8; 32];
     shared_seed.copy_from_slice(&shared_seed_bytes);
 
-    let (_original_bitmap, _permutation, shuffled_bitmap) = sample_shuffle_instance(shared_seed, len);
+    let (_original_bitmap, _permutation, shuffled_bitmap) =
+        sample_shuffle_instance(shared_seed, len);
 
     let mut auth_receiver = BufferedVoleReceiver::init(&mut channel, fq(97), LPN21)
         .map_err(|e| eyre::eyre!("verifier failed to init auth VOLE receiver: {e}"))?;

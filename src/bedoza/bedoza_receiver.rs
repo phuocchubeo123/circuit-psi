@@ -1,13 +1,12 @@
 use crate::{
-    bedoza::comm_util::{receive_fe, receive_fe_vec}, 
+    bedoza::comm_util::{receive_fe, receive_fe_vec},
     math::defines::{FE, random_fe_vec_from_rng},
-    tcp_channel::SwankyChannel
-
+    tcp_channel::SwankyChannel,
 };
 use anyhow::{Result, anyhow, ensure};
 
-use std::ops::{Add, Mul, Sub};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
+use std::ops::{Add, Mul, Sub};
 
 // We assume that the offline phase is already done
 // https://eprint.iacr.org/2010/514.pdf
@@ -80,7 +79,7 @@ pub fn receive_open_shares(
         acc_tag += coeff * bedoza_receiver.tag();
     }
 
-    // Consistency check 
+    // Consistency check
     ensure!(
         acc_tag + acc_pad == key * acc_val,
         "Tag mismatch for bedoza opening"

@@ -8,7 +8,9 @@ use crate::{
     },
     circuit_psi::mq_rpmt::{prove_bitmap_shuffle, verify_bitmap_shuffle},
     math::{defines::FE, group::Group},
-    shuffled_oprf::{shuffle_inputer::Inputer, shuffle_shuffler::Shuffler},
+    shuffled_oprf::{
+        two_side_shuffle_inputer::TwoSideInputer, two_side_shuffle_shuffler::TwoSideShuffler,
+    },
     tcp_channel::SwankyChannel,
     vole::{
         vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
@@ -20,7 +22,10 @@ use rand::{Rng, RngExt};
 use std::collections::HashSet;
 
 fn filter_nonzero(values: Vec<FE>) -> Vec<FE> {
-    values.into_iter().filter(|value| *value != FE::zero()).collect()
+    values
+        .into_iter()
+        .filter(|value| *value != FE::zero())
+        .collect()
 }
 
 fn random_permutation<RNG: Rng>(n: usize, rng: &mut RNG) -> Vec<usize> {
@@ -141,32 +146,27 @@ impl TwoSidePsuSender {
             receiver_only_triples.len()
         );
 
-        // Run shuffled OPRF once per role (inputer + shuffler), then reuse it for both PSU directions.
-        let inputer = Inputer::new(self.delta0, self.k0);
-        let sender_oprf = inputer.run_full_shuffled_oprf(
-            sender_set,
-            rng,
-            &mut self.auth_vole_sender,
-            &mut self.auth_vole_receiver,
-            &mut self.product_vole_sender,
-            channel,
-        )?;
-
-        let shuffler = Shuffler::new(self.delta0, self.k0);
+        // Run both shuffled OPRF directions in one merged transcript.
         let receiver_permutation = random_permutation(receiver_set_len, rng);
-        let receiver_oprf = shuffler.run_full_shuffled_oprf(
+        let two_side_runner = TwoSideInputer::new(self.delta0, self.k0);
+        let two_side_oprf = two_side_runner.run_full_two_side_shuffled_oprf(
+            sender_set,
             &receiver_permutation,
             rng,
             &mut self.auth_vole_sender,
             &mut self.auth_vole_receiver,
+            &mut self.product_vole_sender,
             &mut self.product_vole_receiver,
             channel,
         )?;
+        let sender_oprf = two_side_oprf.inputer_output;
+        let receiver_oprf = two_side_oprf.shuffler_output;
 
         let sender_oprf_set = group_set(&sender_oprf.shuffled_oprf);
         let receiver_oprf_set = group_set(&receiver_oprf.shuffled_oprf);
 
-        let sender_shuffled_bitmap = membership_bitmap(&sender_oprf.shuffled_oprf, &receiver_oprf_set);
+        let sender_shuffled_bitmap =
+            membership_bitmap(&sender_oprf.shuffled_oprf, &receiver_oprf_set);
         let receiver_original_bitmap =
             membership_bitmap(&receiver_oprf.unshuffled_oprf, &sender_oprf_set);
         let receiver_shuffled_bitmap =
@@ -190,7 +190,9 @@ impl TwoSidePsuSender {
         let authenticated_receiver_original_bitmap = self
             .auth_vole_sender
             .commit_auth(channel, &receiver_original_bitmap)
-            .map_err(|e| anyhow!("failed to authenticate receiver original bitmap for proof: {e}"))?;
+            .map_err(|e| {
+                anyhow!("failed to authenticate receiver original bitmap for proof: {e}")
+            })?;
         prove_bitmap_shuffle(
             &authenticated_receiver_original_bitmap,
             &receiver_oprf.authenticated_permutation,
@@ -206,7 +208,8 @@ impl TwoSidePsuSender {
             authenticated_sender_original_bitmap.len()
         );
         ensure!(
-            receiver_oprf.authenticated_inputs.len() == authenticated_receiver_original_bitmap.len(),
+            receiver_oprf.authenticated_inputs.len()
+                == authenticated_receiver_original_bitmap.len(),
             "two_side_psu receiver-only input/bitmap length mismatch: inputs={} bitmap={}",
             receiver_oprf.authenticated_inputs.len(),
             authenticated_receiver_original_bitmap.len()
@@ -225,10 +228,11 @@ impl TwoSidePsuSender {
         );
 
         // Complement the authenticated bitmap to obtain 1 - b for sender elements.
-        let authenticated_sender_complement_bitmap: Vec<BeDOZaReceiver> = authenticated_sender_original_bitmap
-            .iter()
-            .map(|share| (*share * -FE::one()) + FE::one())
-            .collect();
+        let authenticated_sender_complement_bitmap: Vec<BeDOZaReceiver> =
+            authenticated_sender_original_bitmap
+                .iter()
+                .map(|share| (*share * -FE::one()) + FE::one())
+                .collect();
         // Complement the authenticated bitmap to obtain 1 - b for receiver elements.
         let authenticated_receiver_complement_bitmap: Vec<BeDOZaSender> =
             authenticated_receiver_original_bitmap
@@ -272,7 +276,8 @@ impl TwoSidePsuSender {
         )?;
 
         open_two_side_psu_send(&output.sender_only_shares, channel)?;
-        let opened_receiver_difference = open_two_side_psu_receive(&output.receiver_only_shares, channel)?;
+        let opened_receiver_difference =
+            open_two_side_psu_receive(&output.receiver_only_shares, channel)?;
         Ok(filter_nonzero(opened_receiver_difference))
     }
 }
@@ -342,33 +347,29 @@ impl TwoSidePsuReceiver {
             sender_only_triples.len()
         );
 
-        // Run shuffled OPRF once per role (shuffler + inputer), then reuse it for both PSU directions.
+        // Run both shuffled OPRF directions in one merged transcript.
         let sender_permutation = random_permutation(sender_set_len, rng);
-        let shuffler = Shuffler::new(self.delta1, self.k1);
-        let sender_oprf = shuffler.run_full_shuffled_oprf(
+        let two_side_runner = TwoSideShuffler::new(self.delta1, self.k1);
+        let two_side_oprf = two_side_runner.run_full_two_side_shuffled_oprf(
             &sender_permutation,
-            rng,
-            &mut self.auth_vole_sender,
-            &mut self.auth_vole_receiver,
-            &mut self.product_vole_receiver,
-            channel,
-        )?;
-
-        let inputer = Inputer::new(self.delta1, self.k1);
-        let receiver_oprf = inputer.run_full_shuffled_oprf(
             receiver_set,
             rng,
             &mut self.auth_vole_sender,
             &mut self.auth_vole_receiver,
+            &mut self.product_vole_receiver,
             &mut self.product_vole_sender,
             channel,
         )?;
+        let sender_oprf = two_side_oprf.shuffler_output;
+        let receiver_oprf = two_side_oprf.inputer_output;
 
         let sender_oprf_set = group_set(&sender_oprf.shuffled_oprf);
         let receiver_oprf_set = group_set(&receiver_oprf.shuffled_oprf);
 
-        let sender_original_bitmap = membership_bitmap(&sender_oprf.unshuffled_oprf, &receiver_oprf_set);
-        let sender_shuffled_bitmap = membership_bitmap(&sender_oprf.shuffled_oprf, &receiver_oprf_set);
+        let sender_original_bitmap =
+            membership_bitmap(&sender_oprf.unshuffled_oprf, &receiver_oprf_set);
+        let sender_shuffled_bitmap =
+            membership_bitmap(&sender_oprf.shuffled_oprf, &receiver_oprf_set);
         let receiver_shuffled_bitmap =
             membership_bitmap(&receiver_oprf.shuffled_oprf, &sender_oprf_set);
 
@@ -389,7 +390,9 @@ impl TwoSidePsuReceiver {
         let authenticated_receiver_original_bitmap = self
             .auth_vole_receiver
             .commit_auth(channel, receiver_set.len())
-            .map_err(|e| anyhow!("failed to receive authenticated receiver original bitmap: {e}"))?;
+            .map_err(|e| {
+                anyhow!("failed to receive authenticated receiver original bitmap: {e}")
+            })?;
         verify_bitmap_shuffle(
             &authenticated_receiver_original_bitmap,
             &receiver_oprf.authenticated_permutation,
@@ -406,7 +409,8 @@ impl TwoSidePsuReceiver {
             authenticated_sender_original_bitmap.len()
         );
         ensure!(
-            receiver_oprf.authenticated_inputs.len() == authenticated_receiver_original_bitmap.len(),
+            receiver_oprf.authenticated_inputs.len()
+                == authenticated_receiver_original_bitmap.len(),
             "two_side_psu receiver-only input/bitmap length mismatch: inputs={} bitmap={}",
             receiver_oprf.authenticated_inputs.len(),
             authenticated_receiver_original_bitmap.len()
@@ -425,10 +429,11 @@ impl TwoSidePsuReceiver {
         );
 
         // Complement the authenticated bitmap to obtain 1 - b for sender elements.
-        let authenticated_sender_complement_bitmap: Vec<BeDOZaSender> = authenticated_sender_original_bitmap
-            .iter()
-            .map(|share| (*share * -FE::one()) + FE::one())
-            .collect();
+        let authenticated_sender_complement_bitmap: Vec<BeDOZaSender> =
+            authenticated_sender_original_bitmap
+                .iter()
+                .map(|share| (*share * -FE::one()) + FE::one())
+                .collect();
         // Complement the authenticated bitmap to obtain 1 - b for receiver elements.
         let authenticated_receiver_complement_bitmap: Vec<BeDOZaReceiver> =
             authenticated_receiver_original_bitmap
@@ -471,7 +476,8 @@ impl TwoSidePsuReceiver {
             channel,
         )?;
 
-        let opened_sender_difference = open_two_side_psu_receive(&output.sender_only_shares, channel)?;
+        let opened_sender_difference =
+            open_two_side_psu_receive(&output.sender_only_shares, channel)?;
         open_two_side_psu_send(&output.receiver_only_shares, channel)?;
         Ok(filter_nonzero(opened_sender_difference))
     }

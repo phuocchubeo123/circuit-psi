@@ -194,11 +194,7 @@ impl Shuffler {
         log_step("computed authenticated (x_i + k0) commitments");
 
         vole_receiver
-            .commit_auth_into(
-                channel,
-                authenticated_inputs.len(),
-                product_commitments_out,
-            )
+            .commit_auth_into(channel, authenticated_inputs.len(), product_commitments_out)
             .map_err(|e| anyhow!("failed to materialize receiver VOLE outputs: {e}"))?;
         log_step("received authenticated r_i * (x_i + k0) commitments");
 
@@ -704,5 +700,4 @@ impl Shuffler {
             authenticated_permutation: authenticated_pi_sender,
         })
     }
-
 }

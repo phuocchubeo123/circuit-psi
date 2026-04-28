@@ -112,12 +112,7 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
         .map_err(|e| eyre::eyre!("sender failed to initialize one_side_psu: {e}"))?;
     let mut protocol_rng = sample_local_protocol_rng(&mut seed_rng);
     one_side_psu
-        .run_and_open(
-            &sender_set,
-            sender_triples,
-            &mut protocol_rng,
-            &mut channel,
-        )
+        .run_and_open(&sender_set, sender_triples, &mut protocol_rng, &mut channel)
         .map_err(|e| eyre::eyre!("sender failed to run one_side_psu: {e}"))?;
 
     Ok(PartyRun {
@@ -125,7 +120,9 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
         sender_difference_size: expected_difference.len(),
         union_size: expected_union.len(),
         bytes_sent: channel.bytes_sent().saturating_sub(bytes_sent_before),
-        bytes_received: channel.bytes_received().saturating_sub(bytes_received_before),
+        bytes_received: channel
+            .bytes_received()
+            .saturating_sub(bytes_received_before),
         elapsed_ms: start.elapsed().as_millis(),
     })
 }
@@ -198,7 +195,9 @@ fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
         sender_difference_size: sender_difference.len(),
         union_size: union.len(),
         bytes_sent: channel.bytes_sent().saturating_sub(bytes_sent_before),
-        bytes_received: channel.bytes_received().saturating_sub(bytes_received_before),
+        bytes_received: channel
+            .bytes_received()
+            .saturating_sub(bytes_received_before),
         elapsed_ms: start.elapsed().as_millis(),
     })
 }

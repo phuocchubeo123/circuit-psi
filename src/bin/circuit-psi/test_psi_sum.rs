@@ -1,5 +1,5 @@
 use circuit_psi::{
-    circuit_psi::psi_sum::{open_psi_sum_receive, open_psi_sum_send, PsiSumReceiver, PsiSumSender},
+    circuit_psi::psi_sum::{PsiSumReceiver, PsiSumSender, open_psi_sum_receive, open_psi_sum_send},
     math::defines::FE,
     tcp_channel::{connect_with_retry, listen_to},
     utils::{
@@ -8,12 +8,8 @@ use circuit_psi::{
     },
 };
 use clap::{Parser, ValueEnum};
-use rand::{rngs::StdRng, RngExt, SeedableRng};
-use std::{
-    collections::HashSet,
-    path::PathBuf,
-    time::Instant,
-};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
+use std::{collections::HashSet, path::PathBuf, time::Instant};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum Side {
@@ -119,12 +115,7 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
         .map_err(|e| eyre::eyre!("sender failed to initialize psi_sum: {e}"))?;
     let mut protocol_rng = sample_local_protocol_rng(&mut seed_rng);
     let sum_share = psi_sum
-        .run(
-            &sender_set,
-            sender_triples,
-            &mut protocol_rng,
-            &mut channel,
-        )
+        .run(&sender_set, sender_triples, &mut protocol_rng, &mut channel)
         .map_err(|e| eyre::eyre!("sender failed to run psi_sum: {e}"))?;
 
     let opened_sum = open_psi_sum_receive(&sum_share, &mut channel)
@@ -140,7 +131,9 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
         side: Side::Sender,
         opened_sum,
         bytes_sent: channel.bytes_sent().saturating_sub(bytes_sent_before),
-        bytes_received: channel.bytes_received().saturating_sub(bytes_received_before),
+        bytes_received: channel
+            .bytes_received()
+            .saturating_sub(bytes_received_before),
         elapsed_ms: start.elapsed().as_millis(),
     })
 }
@@ -198,7 +191,9 @@ fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
         side: Side::Receiver,
         opened_sum: expected,
         bytes_sent: channel.bytes_sent().saturating_sub(bytes_sent_before),
-        bytes_received: channel.bytes_received().saturating_sub(bytes_received_before),
+        bytes_received: channel
+            .bytes_received()
+            .saturating_sub(bytes_received_before),
         elapsed_ms: start.elapsed().as_millis(),
     })
 }

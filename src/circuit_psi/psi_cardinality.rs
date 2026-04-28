@@ -1,6 +1,8 @@
 use crate::{
     math::{defines::FE, group::Group},
-    shuffled_oprf::{shuffle_inputer::Inputer, shuffle_shuffler::Shuffler},
+    shuffled_oprf::{
+        two_side_shuffle_inputer::TwoSideInputer, two_side_shuffle_shuffler::TwoSideShuffler,
+    },
     tcp_channel::SwankyChannel,
     vole::{
         vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
@@ -100,26 +102,20 @@ impl PsiCardinalitySender {
             "PSI cardinality sender received an empty remote set size"
         );
 
-        let inputer = Inputer::new(self.delta0, self.k0);
-        let sender_oprfs = inputer.run_full_shuffled_oprf(
-            sender_set,
-            rng,
-            &mut self.auth_vole_sender,
-            &mut self.auth_vole_receiver,
-            &mut self.product_vole_sender,
-            channel,
-        )?;
-
-        let shuffler = Shuffler::new(self.delta0, self.k0);
         let receiver_permutation = random_permutation(receiver_set_len, rng);
-        let receiver_oprfs = shuffler.run_full_shuffled_oprf(
+        let two_side_runner = TwoSideInputer::new(self.delta0, self.k0);
+        let two_side_oprf = two_side_runner.run_full_two_side_shuffled_oprf(
+            sender_set,
             &receiver_permutation,
             rng,
             &mut self.auth_vole_sender,
             &mut self.auth_vole_receiver,
+            &mut self.product_vole_sender,
             &mut self.product_vole_receiver,
             channel,
         )?;
+        let sender_oprfs = two_side_oprf.inputer_output;
+        let receiver_oprfs = two_side_oprf.shuffler_output;
 
         Ok(intersection_cardinality(
             &sender_oprfs.shuffled_oprf,
@@ -184,26 +180,20 @@ impl PsiCardinalityReceiver {
             "PSI cardinality receiver received an empty remote set size"
         );
 
-        let shuffler = Shuffler::new(self.delta1, self.k1);
         let sender_permutation = random_permutation(sender_set_len, rng);
-        let sender_oprfs = shuffler.run_full_shuffled_oprf(
+        let two_side_runner = TwoSideShuffler::new(self.delta1, self.k1);
+        let two_side_oprf = two_side_runner.run_full_two_side_shuffled_oprf(
             &sender_permutation,
-            rng,
-            &mut self.auth_vole_sender,
-            &mut self.auth_vole_receiver,
-            &mut self.product_vole_receiver,
-            channel,
-        )?;
-
-        let inputer = Inputer::new(self.delta1, self.k1);
-        let receiver_oprfs = inputer.run_full_shuffled_oprf(
             receiver_set,
             rng,
             &mut self.auth_vole_sender,
             &mut self.auth_vole_receiver,
+            &mut self.product_vole_receiver,
             &mut self.product_vole_sender,
             channel,
         )?;
+        let sender_oprfs = two_side_oprf.shuffler_output;
+        let receiver_oprfs = two_side_oprf.inputer_output;
 
         Ok(intersection_cardinality(
             &sender_oprfs.shuffled_oprf,

@@ -34,8 +34,8 @@ fn reconstruct_value(left: &BeDOZa, right: &BeDOZa) -> FE {
 }
 
 fn assert_cross_tag_checks(local: &BeDOZa, remote: &BeDOZa) {
-    let expected_tag = local.bedoza_receiver().key() * remote.bedoza_sender().val()
-        - remote.bedoza_sender().pad();
+    let expected_tag =
+        local.bedoza_receiver().key() * remote.bedoza_sender().val() - remote.bedoza_sender().pad();
     assert_eq!(local.bedoza_receiver().tag(), expected_tag);
 }
 

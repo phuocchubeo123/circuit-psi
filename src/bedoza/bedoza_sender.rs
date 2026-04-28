@@ -1,6 +1,6 @@
 use crate::{
-    bedoza::comm_util::send_fe, 
-    math::defines::{FE, random_fe_vec_from_rng}, 
+    bedoza::comm_util::send_fe,
+    math::defines::{FE, random_fe_vec_from_rng},
     network::tcp_channel::SwankyChannel,
 };
 use anyhow::{Result, anyhow, ensure};
