@@ -93,6 +93,33 @@ impl BufferedVoleSender {
             .map_err(|e| eyre::eyre!(e.to_string()))?;
         Ok(out)
     }
+
+    pub fn commit_auth_into(
+        &mut self,
+        channel: &mut SwankyChannel,
+        inputs: &[FE],
+        out: &mut Vec<BeDOZaSender>,
+    ) -> Result<()> {
+        self.ensure_random_capacity(channel, inputs.len())?;
+
+        let mut encoded = Vec::with_capacity(8 + inputs.len() * 32);
+        encoded.extend_from_slice(&(inputs.len() as u64).to_le_bytes());
+        out.clear();
+        out.reserve(inputs.len());
+        for &x in inputs {
+            let random = self.random_buffer.pop_front().expect("checked capacity");
+            let r = random.val();
+            let beta = random.pad();
+            let correction = x - r;
+            encoded.extend_from_slice(&correction.to_bytes_le());
+            out.push(BeDOZaSender::new(x, beta));
+        }
+
+        channel
+            .send(&encoded)
+            .map_err(|e| eyre::eyre!(e.to_string()))?;
+        Ok(())
+    }
 }
 
 pub struct BufferedVoleReceiver {
@@ -203,6 +230,48 @@ impl BufferedVoleReceiver {
             out.push(BeDOZaReceiver::new(updated_tag, self.delta));
         }
         Ok(out)
+    }
+
+    pub fn commit_auth_into(
+        &mut self,
+        channel: &mut SwankyChannel,
+        expected_count: usize,
+        out: &mut Vec<BeDOZaReceiver>,
+    ) -> Result<()> {
+        self.ensure_random_capacity(channel, expected_count)?;
+
+        let payload = channel.receive().map_err(|e| eyre::eyre!(e.to_string()))?;
+        ensure!(payload.len() >= 8, "materialize payload too short");
+        let mut count_bytes = [0u8; 8];
+        count_bytes.copy_from_slice(&payload[..8]);
+        let count = u64::from_le_bytes(count_bytes) as usize;
+        ensure!(
+            count == expected_count,
+            "materialize mismatch: expected {} items, peer sent {}",
+            expected_count,
+            count
+        );
+
+        let correction_bytes = &payload[8..];
+        ensure!(
+            correction_bytes.len() == count * 32,
+            "materialize payload length mismatch: expected {} bytes, got {}",
+            count * 32,
+            correction_bytes.len()
+        );
+
+        out.clear();
+        out.reserve(count);
+        for chunk in correction_bytes.chunks_exact(32) {
+            let mut bytes = [0u8; 32];
+            bytes.copy_from_slice(chunk);
+            let correction = FE::from_bytes_le(&bytes).map_err(|e| eyre::eyre!("{e:?}"))?;
+
+            let random = self.random_buffer.pop_front().expect("checked capacity");
+            let updated_tag = random.tag() + correction * self.delta;
+            out.push(BeDOZaReceiver::new(updated_tag, self.delta));
+        }
+        Ok(())
     }
 
     pub fn materialize_next(

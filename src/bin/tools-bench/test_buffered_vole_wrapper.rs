@@ -35,6 +35,41 @@ struct Args {
     materialize_2: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum CommitMode {
+    ReturnVec,
+    InPlaceBuffer,
+}
+
+impl CommitMode {
+    fn label(self) -> &'static str {
+        match self {
+            CommitMode::ReturnVec => "return_vec",
+            CommitMode::InPlaceBuffer => "in_place_buffer",
+        }
+    }
+}
+
+struct SenderRun {
+    random_out: Vec<BeDOZaSender>,
+    out_1: Vec<BeDOZaSender>,
+    out_2: Vec<BeDOZaSender>,
+    stats: Vec<OpStats>,
+    bytes_sent: u64,
+    bytes_received: u64,
+    random_left: usize,
+}
+
+struct ReceiverRun {
+    random_out: Vec<BeDOZaReceiver>,
+    out_1: Vec<BeDOZaReceiver>,
+    out_2: Vec<BeDOZaReceiver>,
+    stats: Vec<OpStats>,
+    bytes_sent: u64,
+    bytes_received: u64,
+    random_left: usize,
+}
+
 fn make_inputs(offset: u64, n: usize) -> Vec<FE> {
     (0..n).map(|i| fq(offset + i as u64)).collect()
 }
@@ -44,15 +79,8 @@ fn sender_party(
     extend_chunk: usize,
     materialize_1: usize,
     materialize_2: usize,
-) -> eyre::Result<(
-    Vec<BeDOZaSender>,
-    Vec<BeDOZaSender>,
-    Vec<BeDOZaSender>,
-    Vec<OpStats>,
-    u64,
-    u64,
-    usize,
-)> {
+    mode: CommitMode,
+) -> eyre::Result<SenderRun> {
     let mut channel = listen_to(addr).map_err(|e| eyre::eyre!("{e}"))?;
 
     let _rng = AesRng::new();
@@ -78,7 +106,14 @@ fn sender_party(
     let before_sent = channel.bytes_sent();
     let before_received = channel.bytes_received();
     let started = Instant::now();
-    let out_1 = vole.commit_auth(&mut channel, &inputs_1)?;
+    let out_1 = match mode {
+        CommitMode::ReturnVec => vole.commit_auth(&mut channel, &inputs_1)?,
+        CommitMode::InPlaceBuffer => {
+            let mut out = Vec::with_capacity(materialize_1);
+            vole.commit_auth_into(&mut channel, &inputs_1, &mut out)?;
+            out
+        }
+    };
     stats.push(OpStats {
         name: "commit_auth_1",
         elapsed_ms: started.elapsed().as_secs_f64() * 1_000.0,
@@ -89,7 +124,14 @@ fn sender_party(
     let before_sent = channel.bytes_sent();
     let before_received = channel.bytes_received();
     let started = Instant::now();
-    let out_2 = vole.commit_auth(&mut channel, &inputs_2)?;
+    let out_2 = match mode {
+        CommitMode::ReturnVec => vole.commit_auth(&mut channel, &inputs_2)?,
+        CommitMode::InPlaceBuffer => {
+            let mut out = Vec::with_capacity(materialize_2);
+            vole.commit_auth_into(&mut channel, &inputs_2, &mut out)?;
+            out
+        }
+    };
     stats.push(OpStats {
         name: "commit_auth_2",
         elapsed_ms: started.elapsed().as_secs_f64() * 1_000.0,
@@ -97,15 +139,15 @@ fn sender_party(
         bytes_received_delta: channel.bytes_received() - before_received,
     });
 
-    Ok((
+    Ok(SenderRun {
         random_out,
         out_1,
         out_2,
         stats,
-        channel.bytes_sent(),
-        channel.bytes_received(),
-        vole.random_available(),
-    ))
+        bytes_sent: channel.bytes_sent(),
+        bytes_received: channel.bytes_received(),
+        random_left: vole.random_available(),
+    })
 }
 
 fn receiver_party(
@@ -114,15 +156,8 @@ fn receiver_party(
     extend_chunk: usize,
     materialize_1: usize,
     materialize_2: usize,
-) -> eyre::Result<(
-    Vec<BeDOZaReceiver>,
-    Vec<BeDOZaReceiver>,
-    Vec<BeDOZaReceiver>,
-    Vec<OpStats>,
-    u64,
-    u64,
-    usize,
-)> {
+    mode: CommitMode,
+) -> eyre::Result<ReceiverRun> {
     let mut channel = connect_with_retry(addr).map_err(|e| eyre::eyre!("{e}"))?;
 
     let _rng = AesRng::new();
@@ -145,8 +180,14 @@ fn receiver_party(
     let before_sent = channel.bytes_sent();
     let before_received = channel.bytes_received();
     let started = Instant::now();
-    let out_1 = vole.commit_auth(&mut channel, materialize_1)?;
-
+    let out_1 = match mode {
+        CommitMode::ReturnVec => vole.commit_auth(&mut channel, materialize_1)?,
+        CommitMode::InPlaceBuffer => {
+            let mut out = Vec::with_capacity(materialize_1);
+            vole.commit_auth_into(&mut channel, materialize_1, &mut out)?;
+            out
+        }
+    };
     stats.push(OpStats {
         name: "commit_auth_1",
         elapsed_ms: started.elapsed().as_secs_f64() * 1_000.0,
@@ -157,7 +198,14 @@ fn receiver_party(
     let before_sent = channel.bytes_sent();
     let before_received = channel.bytes_received();
     let started = Instant::now();
-    let out_2 = vole.commit_auth(&mut channel, materialize_2)?;
+    let out_2 = match mode {
+        CommitMode::ReturnVec => vole.commit_auth(&mut channel, materialize_2)?,
+        CommitMode::InPlaceBuffer => {
+            let mut out = Vec::with_capacity(materialize_2);
+            vole.commit_auth_into(&mut channel, materialize_2, &mut out)?;
+            out
+        }
+    };
     stats.push(OpStats {
         name: "commit_auth_2",
         elapsed_ms: started.elapsed().as_secs_f64() * 1_000.0,
@@ -165,15 +213,15 @@ fn receiver_party(
         bytes_received_delta: channel.bytes_received() - before_received,
     });
 
-    Ok((
+    Ok(ReceiverRun {
         random_out,
         out_1,
         out_2,
         stats,
-        channel.bytes_sent(),
-        channel.bytes_received(),
-        vole.random_available(),
-    ))
+        bytes_sent: channel.bytes_sent(),
+        bytes_received: channel.bytes_received(),
+        random_left: vole.random_available(),
+    })
 }
 
 fn verify_batch(delta: FE, sender_out: &[BeDOZaSender], receiver_out: &[BeDOZaReceiver]) {
@@ -183,11 +231,12 @@ fn verify_batch(delta: FE, sender_out: &[BeDOZaSender], receiver_out: &[BeDOZaRe
     }
 }
 
-fn print_op_stats(prefix: &str, stats: &[OpStats]) {
+fn print_op_stats(prefix: &str, mode: CommitMode, stats: &[OpStats]) {
     for stat in stats {
         println!(
-            "{} op={} time_ms={:.3} bytes_sent_delta={} bytes_received_delta={}",
+            "{} mode={} op={} time_ms={:.3} bytes_sent_delta={} bytes_received_delta={}",
             prefix,
+            mode.label(),
             stat.name,
             stat.elapsed_ms,
             stat.bytes_sent_delta,
@@ -196,10 +245,10 @@ fn print_op_stats(prefix: &str, stats: &[OpStats]) {
     }
 }
 
-fn main() -> eyre::Result<()> {
-    let args = Args::parse();
-
-    let delta = fq(7);
+fn run_mode(args: &Args, delta: FE, mode: CommitMode) -> eyre::Result<()> {
+    let extend_chunk = args.extend_chunk;
+    let materialize_1 = args.materialize_1;
+    let materialize_2 = args.materialize_2;
 
     let listener = TcpListener::bind("127.0.0.1:0").wrap_err("bind localhost listener")?;
     let addr_str = listener
@@ -212,59 +261,63 @@ fn main() -> eyre::Result<()> {
     let sender_handle = thread::spawn(move || {
         sender_party(
             &sender_addr,
-            args.extend_chunk,
-            args.materialize_1,
-            args.materialize_2,
+            extend_chunk,
+            materialize_1,
+            materialize_2,
+            mode,
         )
     });
-    let (
-        receiver_random,
-        receiver_1,
-        receiver_2,
-        receiver_stats,
-        receiver_sent,
-        receiver_received,
-        receiver_left,
-    ) = receiver_party(
+
+    let receiver_run = receiver_party(
         &addr_str,
         delta,
-        args.extend_chunk,
-        args.materialize_1,
-        args.materialize_2,
+        extend_chunk,
+        materialize_1,
+        materialize_2,
+        mode,
     )?;
-    let (
-        sender_random,
-        sender_1,
-        sender_2,
-        sender_stats,
-        sender_sent,
-        sender_received,
-        sender_left,
-    ) =
-        sender_handle
-            .join()
-            .expect("sender thread panicked")
-            .wrap_err("sender party failed")?;
+    let sender_run = sender_handle
+        .join()
+        .expect("sender thread panicked")
+        .wrap_err("sender party failed")?;
 
-    verify_batch(delta, &sender_random, &receiver_random);
-    verify_batch(delta, &sender_1, &receiver_1);
-    verify_batch(delta, &sender_2, &receiver_2);
+    verify_batch(delta, &sender_run.random_out, &receiver_run.random_out);
+    verify_batch(delta, &sender_run.out_1, &receiver_run.out_1);
+    verify_batch(delta, &sender_run.out_2, &receiver_run.out_2);
 
     println!(
-        "buffered VOLE wrapper check passed. random_auth={}, materialized=({}, {})",
-        args.extend_chunk,
-        sender_1.len(),
-        sender_2.len(),
+        "buffered VOLE wrapper check passed mode={} random_auth={} materialized=({}, {})",
+        mode.label(),
+        extend_chunk,
+        sender_run.out_1.len(),
+        sender_run.out_2.len(),
     );
     println!(
-        "random buffer left: sender={}, receiver={}",
-        sender_left, receiver_left
+        "mode={} random buffer left: sender={} receiver={}",
+        mode.label(),
+        sender_run.random_left,
+        receiver_run.random_left
     );
     println!(
-        "sender bytes: sent={}, received={} | receiver bytes: sent={}, received={}",
-        sender_sent, sender_received, receiver_sent, receiver_received
+        "mode={} sender bytes: sent={} received={} | receiver bytes: sent={} received={}",
+        mode.label(),
+        sender_run.bytes_sent,
+        sender_run.bytes_received,
+        receiver_run.bytes_sent,
+        receiver_run.bytes_received
     );
-    print_op_stats("sender", &sender_stats);
-    print_op_stats("receiver", &receiver_stats);
+    print_op_stats("sender", mode, &sender_run.stats);
+    print_op_stats("receiver", mode, &receiver_run.stats);
+
+    Ok(())
+}
+
+fn main() -> eyre::Result<()> {
+    let args = Args::parse();
+    let delta = fq(7);
+
+    run_mode(&args, delta, CommitMode::ReturnVec)?;
+    run_mode(&args, delta, CommitMode::InPlaceBuffer)?;
+
     Ok(())
 }
