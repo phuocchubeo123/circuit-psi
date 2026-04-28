@@ -99,6 +99,10 @@ name = "test_buffered_vole_wrapper"
 path = "src/bin/tools-bench/test_buffered_vole_wrapper.rs"
 
 [[bin]]
+name = "test_bitmap_shuffle_proof"
+path = "src/bin/tools-bench/test_bitmap_shuffle_proof.rs"
+
+[[bin]]
 name = "bench_shuffle_inputer_steps"
 path = "src/bin/shuffled-oprf/bench_shuffle_inputer_steps.rs"
 

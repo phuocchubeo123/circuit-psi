@@ -51,7 +51,7 @@ fn relabel_receiver_shares(shares: &[BeDOZaReceiver], _side: bool) -> Vec<BeDOZa
     shares.to_vec()
 }
 
-fn prove_bitmap_shuffle(
+pub fn prove_bitmap_shuffle(
     authenticated_original_bitmap: &[BeDOZaSender],
     authenticated_permutation: &[BeDOZaSender],
     shuffled_bitmap: &[FE],
@@ -209,7 +209,7 @@ fn prove_bitmap_shuffle(
     Ok(())
 }
 
-fn verify_bitmap_shuffle<RNG: Rng>(
+pub fn verify_bitmap_shuffle<RNG: Rng>(
     authenticated_original_bitmap: &[BeDOZaReceiver],
     authenticated_permutation: &[BeDOZaReceiver],
     shuffled_bitmap: &[FE],

@@ -58,8 +58,6 @@ fn derive_seed(shared_seed: [u8; 32], label: &[u8]) -> [u8; 32] {
 
 fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     let mut channel = listen_to(addr).map_err(|e| eyre::eyre!("{e}"))?;
-    let start = Instant::now();
-
     let mut seed_rng = rand::rng();
     let mut shared_seed = [0u8; 32];
     seed_rng.fill(&mut shared_seed);
@@ -69,6 +67,11 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
 
     let (sender_set, _receiver_set) =
         sample_correlated_sets(shared_seed, args.set_size, args.intersection_size)?;
+
+    let bytes_sent_before = channel.bytes_sent();
+    let bytes_received_before = channel.bytes_received();
+    let start = Instant::now();
+
     let mut mq_rpmt = MqRpmtSender::new(fq(97), fq(173), &mut channel)
         .map_err(|e| eyre::eyre!("sender failed to initialize mq_rpmt: {e}"))?;
     let mut protocol_rng = StdRng::from_seed(derive_seed(shared_seed, b"sender-protocol-rng"));
@@ -76,8 +79,8 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
         .run(&sender_set, &mut protocol_rng, &mut channel)
         .map_err(|e| eyre::eyre!("sender failed to run mq_rpmt: {e}"))?;
 
-    let bytes_sent = channel.bytes_sent();
-    let bytes_received = channel.bytes_received();
+    let bytes_sent = channel.bytes_sent() - bytes_sent_before;
+    let bytes_received = channel.bytes_received() - bytes_received_before;
     let elapsed_ms = start.elapsed().as_millis();
 
 
@@ -101,7 +104,6 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
 
 fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     let mut channel = connect_with_retry(addr).map_err(|e| eyre::eyre!("{e}"))?;
-    let start = Instant::now();
 
     let shared_seed_bytes = channel
         .receive()
@@ -116,6 +118,9 @@ fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
 
     let (_sender_set, receiver_set) =
         sample_correlated_sets(shared_seed, args.set_size, args.intersection_size)?;
+    let bytes_sent_before = channel.bytes_sent();
+    let bytes_received_before = channel.bytes_received();
+    let start = Instant::now();
     let mut mq_rpmt = MqRpmtReceiver::new(fq(131), fq(149), &mut channel)
         .map_err(|e| eyre::eyre!("receiver failed to initialize mq_rpmt: {e}"))?;
     let mut protocol_rng = StdRng::from_seed(derive_seed(shared_seed, b"receiver-protocol-rng"));
@@ -123,8 +128,8 @@ fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
         .run(&receiver_set, &mut protocol_rng, &mut channel)
         .map_err(|e| eyre::eyre!("receiver failed to run mq_rpmt: {e}"))?;
 
-    let bytes_sent = channel.bytes_sent();
-    let bytes_received = channel.bytes_received();
+    let bytes_sent = channel.bytes_sent() - bytes_sent_before;
+    let bytes_received = channel.bytes_received() - bytes_received_before;
     let elapsed_ms = start.elapsed().as_millis();
 
     send_fe_vec(&output.shuffled_bitmap, &mut channel)
