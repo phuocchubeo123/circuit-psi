@@ -184,13 +184,16 @@ impl Inputer {
             .map_err(|e| anyhow!("Failed to get secret shares of ri * k1: {e}"))?;
         let us: Vec<FE> = k1_auth_ris.iter().map(|share| share.pad()).collect();
 
-        let k1_auth_rand = k1_vole_sender
-            .random_auth(channel, 1)
-            .map_err(|e| anyhow!("Failed to get secret shares of random r0 * k1: {e}"))?[0];
+        let mut k1_auth_rand_buf = Vec::with_capacity(1);
+        k1_vole_sender
+            .random_auth_into(channel, 1, &mut k1_auth_rand_buf)
+            .map_err(|e| anyhow!("Failed to get secret shares of random r0 * k1: {e}"))?;
+        let k1_auth_rand = k1_auth_rand_buf[0];
 
         // 2) Inputer authenticates u_i under shuffler key delta_1.
-        let authenticated_us = vole_sender
-            .commit_auth(channel, &us)
+        let mut authenticated_us = Vec::with_capacity(us.len());
+        vole_sender
+            .commit_auth_into(channel, &us, &mut authenticated_us)
             .map_err(|e| anyhow!("Failed to authenticate ui values: {e}"))?;
 
         let authenticated_r0 = vole_sender
@@ -206,8 +209,9 @@ impl Inputer {
             .map_err(|e| anyhow!("Failed to receive authenticated v0 value: {e}"))?[0];
 
         // 3) Shuffler authenticates v_i under inputer key delta_0 (inputer receives tags).
-        let authenticated_vs = vole_receiver
-            .commit_auth(channel, r_values.len())
+        let mut authenticated_vs = Vec::with_capacity(r_values.len());
+        vole_receiver
+            .commit_auth_into(channel, r_values.len(), &mut authenticated_vs)
             .map_err(|e| anyhow!("Failed to receive authenticated vi values: {e}"))?;
 
         // 4) Prove the correctness of authenticated u_i and r_i using a jointly sampled seed.
@@ -273,8 +277,14 @@ impl Inputer {
 
         // 2) Receive reauthentication
         // Receive shuffler's reauthentication of y_i := r_i*(x_i+k) under delta_0.
-        let reauthenticated_r_x_k_receiver = vole_receiver
-            .commit_auth(channel, authenticated_r_times_x_plus_k.len())
+        let mut reauthenticated_r_x_k_receiver =
+            Vec::with_capacity(authenticated_r_times_x_plus_k.len());
+        vole_receiver
+            .commit_auth_into(
+                channel,
+                authenticated_r_times_x_plus_k.len(),
+                &mut reauthenticated_r_x_k_receiver,
+            )
             .map_err(|e| anyhow!("Failed to receive reauthentication of ri*(xi+k): {e}"))?;
 
         // Shuffler chooses seed for batched sacrifice check.
@@ -321,8 +331,14 @@ impl Inputer {
 
         // 3) Also receive and verify inverse
         // Prove y_i * y_i^{-1} = 1 with Wolverine (public-output multiplication).
-        let authenticated_r_x_k_inverse = vole_receiver
-            .commit_auth(channel, reauthenticated_r_x_k_receiver.len())
+        let mut authenticated_r_x_k_inverse =
+            Vec::with_capacity(reauthenticated_r_x_k_receiver.len());
+        vole_receiver
+            .commit_auth_into(
+                channel,
+                reauthenticated_r_x_k_receiver.len(),
+                &mut authenticated_r_x_k_inverse,
+            )
             .map_err(|e| anyhow!("Failed to receive authenticated inverses of ri*(xi+k): {e}"))?;
         let public_ones = vec![FE::one(); authenticated_r_x_k_inverse.len()];
         wolverine_batch_mul_public_output_verify(

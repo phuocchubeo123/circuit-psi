@@ -60,12 +60,24 @@ impl BufferedVoleSender {
         channel: &mut SwankyChannel,
         count: usize,
     ) -> Result<Vec<BeDOZaSender>> {
-        self.ensure_random_capacity(channel, count)?;
         let mut out = Vec::with_capacity(count);
+        self.random_auth_into(channel, count, &mut out)?;
+        Ok(out)
+    }
+
+    pub fn random_auth_into(
+        &mut self,
+        channel: &mut SwankyChannel,
+        count: usize,
+        out: &mut Vec<BeDOZaSender>,
+    ) -> Result<()> {
+        self.ensure_random_capacity(channel, count)?;
+        out.clear();
+        out.reserve(count);
         for _ in 0..count {
             out.push(self.random_buffer.pop_front().expect("checked capacity"));
         }
-        Ok(out)
+        Ok(())
     }
 
     pub fn commit_auth(
@@ -183,13 +195,24 @@ impl BufferedVoleReceiver {
         channel: &mut SwankyChannel,
         count: usize,
     ) -> Result<Vec<BeDOZaReceiver>> {
-        // Debug later
-        self.ensure_random_capacity(channel, count)?;
         let mut out = Vec::with_capacity(count);
+        self.random_auth_into(channel, count, &mut out)?;
+        Ok(out)
+    }
+
+    pub fn random_auth_into(
+        &mut self,
+        channel: &mut SwankyChannel,
+        count: usize,
+        out: &mut Vec<BeDOZaReceiver>,
+    ) -> Result<()> {
+        self.ensure_random_capacity(channel, count)?;
+        out.clear();
+        out.reserve(count);
         for _ in 0..count {
             out.push(self.random_buffer.pop_front().expect("checked capacity"));
         }
-        Ok(out)
+        Ok(())
     }
 
     pub fn commit_auth(
