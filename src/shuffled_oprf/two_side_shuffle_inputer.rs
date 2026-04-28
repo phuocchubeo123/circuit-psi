@@ -41,6 +41,16 @@ fn run_merged_step4(
     shuffler_delta: FE,
     channel: &mut SwankyChannel,
 ) -> Result<(Vec<Group>, Vec<Group>)> {
+    let start = std::time::Instant::now();
+    let mut step = 0usize;
+    let mut log_step = |description: &str| {
+        step += 1;
+        println!(
+            "[two_side_shuffle_inputer::step4_merged] Step {step}: {description} (elapsed: {:?})",
+            start.elapsed()
+        );
+    };
+
     ensure!(
         !inputer_authenticated_ri_sender.is_empty(),
         "step4 cannot run on empty inputer ri commitments"
@@ -71,6 +81,7 @@ fn run_merged_step4(
         .map(|(ri, &alpha_i)| ri.tag() * alpha_i)
         .fold(FE::zero(), |acc, term| acc + term);
     let g_shuffler_tag_linear = Group::base_point().scalar_mul(&shuffler_tag_linear);
+    log_step("precomputed local g^ri and shuffler-side challenge state");
 
     // Exchange direction A: act as inputer, send g^ri.
     send_group_elements(&g_ri_inputer, channel)
@@ -88,6 +99,7 @@ fn run_merged_step4(
     channel
         .send(&seed_for_peer_inputer)
         .map_err(|e| anyhow!("step4 failed to send peer challenge seed: {}", e))?;
+    log_step("completed large g^ri exchange and sent local seed");
 
     // Receive seed for our inputer-role pad proof.
     let peer_seed_bytes = channel
@@ -100,6 +112,7 @@ fn run_merged_step4(
     );
     let mut peer_seed = [0u8; 32];
     peer_seed.copy_from_slice(&peer_seed_bytes);
+    log_step("received peer seed");
 
     // Compute shuffler-side MSM while deriving inputer-side pad response.
     let shuffler_msm = msm_pippenger(&g_ri_shuffler, &shuffler_alphas)
@@ -117,6 +130,7 @@ fn run_merged_step4(
         .map(|(ri, &alpha_i)| ri.pad() * alpha_i)
         .fold(FE::zero(), |acc, term| acc + term);
     let inputer_pad_group = Group::base_point().scalar_mul(&inputer_pad_linear);
+    log_step("finished local MSM/pad computations");
     send_group_elements(&[inputer_pad_group], channel)
         .map_err(|e| anyhow!("step4 failed to send pad consistency group element: {}", e))?;
 
@@ -137,6 +151,7 @@ fn run_merged_step4(
         lhs.as_point() == shuffler_msm_delta.as_point(),
         "step4 consistency check failed: MSM/tag relation for peer r_i commitments did not hold"
     );
+    log_step("verified peer pad proof and completed merged step4");
 
     Ok((g_ri_inputer, g_ri_shuffler))
 }

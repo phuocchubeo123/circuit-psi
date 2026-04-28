@@ -41,6 +41,16 @@ fn run_merged_step4(
     shuffler_delta: FE,
     channel: &mut SwankyChannel,
 ) -> Result<(Vec<Group>, Vec<Group>)> {
+    let start = std::time::Instant::now();
+    let mut step = 0usize;
+    let mut log_step = |description: &str| {
+        step += 1;
+        println!(
+            "[two_side_shuffle_shuffler::step4_merged] Step {step}: {description} (elapsed: {:?})",
+            start.elapsed()
+        );
+    };
+
     ensure!(
         !inputer_authenticated_ri_sender.is_empty(),
         "step4 cannot run on empty inputer ri commitments"
@@ -71,12 +81,11 @@ fn run_merged_step4(
         .map(|(ri, &alpha_i)| ri.tag() * alpha_i)
         .fold(FE::zero(), |acc, term| acc + term);
     let g_shuffler_tag_linear = Group::base_point().scalar_mul(&shuffler_tag_linear);
+    log_step("precomputed local g^ri and shuffler-side challenge state");
 
-    // Exchange direction A: act as inputer, send g^ri.
-    send_group_elements(&g_ri_inputer, channel)
-        .map_err(|e| anyhow!("step4 failed to send local g^ri values: {}", e))?;
-
-    // Exchange direction B: act as shuffler, receive peer g^ri and challenge it.
+    // Mirrored ordering versus two_side_shuffle_inputer:
+    // 1) receive peer g^ri (our shuffler role),
+    // 2) send local g^ri (our inputer role).
     let g_ri_shuffler = receive_group_elements(channel)
         .map_err(|e| anyhow!("step4 failed to receive peer g^ri values: {}", e))?;
     ensure!(
@@ -85,11 +94,12 @@ fn run_merged_step4(
         g_ri_shuffler.len(),
         shuffler_authenticated_ri_receiver.len()
     );
-    channel
-        .send(&seed_for_peer_inputer)
-        .map_err(|e| anyhow!("step4 failed to send peer challenge seed: {}", e))?;
+    send_group_elements(&g_ri_inputer, channel)
+        .map_err(|e| anyhow!("step4 failed to send local g^ri values: {}", e))?;
+    log_step("completed large g^ri exchange");
 
-    // Receive seed for our inputer-role pad proof.
+    // 3) receive peer seed for our inputer-role pad proof, then
+    // 4) send our seed for peer's inputer-role pad proof.
     let peer_seed_bytes = channel
         .receive()
         .map_err(|e| anyhow!("step4 failed to receive pad-challenge seed: {}", e))?;
@@ -100,6 +110,10 @@ fn run_merged_step4(
     );
     let mut peer_seed = [0u8; 32];
     peer_seed.copy_from_slice(&peer_seed_bytes);
+    channel
+        .send(&seed_for_peer_inputer)
+        .map_err(|e| anyhow!("step4 failed to send peer challenge seed: {}", e))?;
+    log_step("exchanged step4 seeds");
 
     // Compute shuffler-side MSM while deriving inputer-side pad response.
     let shuffler_msm = msm_pippenger(&g_ri_shuffler, &shuffler_alphas)
@@ -117,10 +131,9 @@ fn run_merged_step4(
         .map(|(ri, &alpha_i)| ri.pad() * alpha_i)
         .fold(FE::zero(), |acc, term| acc + term);
     let inputer_pad_group = Group::base_point().scalar_mul(&inputer_pad_linear);
-    send_group_elements(&[inputer_pad_group], channel)
-        .map_err(|e| anyhow!("step4 failed to send pad consistency group element: {}", e))?;
+    log_step("finished local MSM/pad computations");
 
-    // Finish shuffler verification with peer's pad proof.
+    // 5) Receive peer pad proof for our shuffler verification.
     let peer_pad_group = receive_group_elements(channel).map_err(|e| {
         anyhow!(
             "step4 failed to receive peer pad consistency group element: {}",
@@ -137,6 +150,12 @@ fn run_merged_step4(
         lhs.as_point() == shuffler_msm_delta.as_point(),
         "step4 consistency check failed: MSM/tag relation for peer r_i commitments did not hold"
     );
+    log_step("verified peer pad proof");
+
+    // 6) Send our inputer-role pad proof to peer's shuffler.
+    send_group_elements(&[inputer_pad_group], channel)
+        .map_err(|e| anyhow!("step4 failed to send pad consistency group element: {}", e))?;
+    log_step("sent local pad proof and completed merged step4");
 
     Ok((g_ri_inputer, g_ri_shuffler))
 }
