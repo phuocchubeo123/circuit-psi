@@ -6,15 +6,65 @@ use crate::{
         bedoza_sender::BeDOZaSender,
         open_values_receive, open_values_send,
     },
-    circuit_psi::mq_rpmt::{MqRpmtReceiver, MqRpmtSender},
-    math::defines::FE,
+    circuit_psi::mq_rpmt::{prove_bitmap_shuffle, verify_bitmap_shuffle},
+    math::{defines::FE, group::Group},
+    shuffled_oprf::{shuffle_inputer::Inputer, shuffle_shuffler::Shuffler},
     tcp_channel::SwankyChannel,
+    vole::{
+        vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
+        vole_triple::LPN21,
+    },
 };
 use anyhow::{Result, anyhow, ensure};
-use rand::Rng;
+use rand::{Rng, RngExt};
+use std::collections::HashSet;
 
 fn filter_nonzero(values: Vec<FE>) -> Vec<FE> {
     values.into_iter().filter(|value| *value != FE::zero()).collect()
+}
+
+fn random_permutation<RNG: Rng>(n: usize, rng: &mut RNG) -> Vec<usize> {
+    let mut permutation: Vec<usize> = (0..n).collect();
+    for i in (1..n).rev() {
+        let j = rng.random_range(0..=i);
+        permutation.swap(i, j);
+    }
+    permutation
+}
+
+fn group_set(values: &[Group]) -> HashSet<[u8; 32]> {
+    values.iter().map(Group::to_bytes).collect()
+}
+
+fn membership_bitmap(values: &[Group], membership_set: &HashSet<[u8; 32]>) -> Vec<FE> {
+    values
+        .iter()
+        .map(|value| {
+            if membership_set.contains(&value.to_bytes()) {
+                FE::one()
+            } else {
+                FE::zero()
+            }
+        })
+        .collect()
+}
+
+fn exchange_set_size(local_len: usize, channel: &mut SwankyChannel) -> Result<usize> {
+    channel
+        .send(&(local_len as u64).to_le_bytes())
+        .map_err(|e| anyhow!("failed to send local set size: {e}"))?;
+    let remote_len_bytes = channel
+        .receive()
+        .map_err(|e| anyhow!("failed to receive remote set size: {e}"))?;
+    ensure!(
+        remote_len_bytes.len() == 8,
+        "expected 8 bytes for remote set size, got {}",
+        remote_len_bytes.len()
+    );
+
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&remote_len_bytes);
+    Ok(u64::from_le_bytes(bytes) as usize)
 }
 
 pub struct TwoSidePsuOutput {
@@ -23,20 +73,32 @@ pub struct TwoSidePsuOutput {
 }
 
 pub struct TwoSidePsuSender {
-    sender_only_mq_rpmt: MqRpmtSender,
-    receiver_only_mq_rpmt: MqRpmtReceiver,
+    delta0: FE,
+    k0: FE,
+    auth_vole_sender: BufferedVoleSender,
+    auth_vole_receiver: BufferedVoleReceiver,
+    product_vole_sender: BufferedVoleSender,
+    product_vole_receiver: BufferedVoleReceiver,
 }
 
 impl TwoSidePsuSender {
     pub fn new(delta0: FE, k0: FE, channel: &mut SwankyChannel) -> Result<Self> {
-        let sender_only_mq_rpmt = MqRpmtSender::new(delta0, k0, channel)
-            .map_err(|e| anyhow!("init sender-only mq_rpmt failed: {e}"))?;
-        let receiver_only_mq_rpmt = MqRpmtReceiver::new(delta0, k0, channel)
-            .map_err(|e| anyhow!("init receiver-only mq_rpmt failed: {e}"))?;
+        let auth_vole_sender = BufferedVoleSender::init(channel, LPN21)
+            .map_err(|e| anyhow!("init auth sender VOLE failed: {e}"))?;
+        let auth_vole_receiver = BufferedVoleReceiver::init(channel, delta0, LPN21)
+            .map_err(|e| anyhow!("init auth receiver VOLE failed: {e}"))?;
+        let product_vole_sender = BufferedVoleSender::init(channel, LPN21)
+            .map_err(|e| anyhow!("init product sender VOLE failed: {e}"))?;
+        let product_vole_receiver = BufferedVoleReceiver::init(channel, k0, LPN21)
+            .map_err(|e| anyhow!("init product receiver VOLE failed: {e}"))?;
 
         Ok(Self {
-            sender_only_mq_rpmt,
-            receiver_only_mq_rpmt,
+            delta0,
+            k0,
+            auth_vole_sender,
+            auth_vole_receiver,
+            product_vole_sender,
+            product_vole_receiver,
         })
     }
 
@@ -59,78 +121,129 @@ impl TwoSidePsuSender {
             sender_only_triples.len()
         );
         ensure!(
+            sender_only_triples.len() > 1,
+            "two_side_psu sender requires at least 2 sender-only triples"
+        );
+        ensure!(
             receiver_only_triples.len() > 1,
             "two_side_psu sender requires at least 2 receiver-only triples"
         );
 
-        let sender_only_mq_rpmt_output = self
-            .sender_only_mq_rpmt
-            .run(sender_set, rng, channel)
-            .map_err(|e| anyhow!("sender-only mq_rpmt failed: {e}"))?;
-        let receiver_only_mq_rpmt_output = self
-            .receiver_only_mq_rpmt
-            .run(sender_set, rng, channel)
-            .map_err(|e| anyhow!("receiver-only mq_rpmt failed: {e}"))?;
+        let receiver_set_len = exchange_set_size(sender_set.len(), channel)?;
+        ensure!(
+            receiver_set_len > 1,
+            "two_side_psu sender requires at least 2 receiver inputs"
+        );
+        ensure!(
+            receiver_set_len == receiver_only_triples.len(),
+            "two_side_psu receiver-only input/triple length mismatch: inputs={} triples={}",
+            receiver_set_len,
+            receiver_only_triples.len()
+        );
+
+        // Run shuffled OPRF once per role (inputer + shuffler), then reuse it for both PSU directions.
+        let inputer = Inputer::new(self.delta0, self.k0);
+        let sender_oprf = inputer.run_full_shuffled_oprf(
+            sender_set,
+            rng,
+            &mut self.auth_vole_sender,
+            &mut self.auth_vole_receiver,
+            &mut self.product_vole_sender,
+            channel,
+        )?;
+
+        let shuffler = Shuffler::new(self.delta0, self.k0);
+        let receiver_permutation = random_permutation(receiver_set_len, rng);
+        let receiver_oprf = shuffler.run_full_shuffled_oprf(
+            &receiver_permutation,
+            rng,
+            &mut self.auth_vole_sender,
+            &mut self.auth_vole_receiver,
+            &mut self.product_vole_receiver,
+            channel,
+        )?;
+
+        let sender_oprf_set = group_set(&sender_oprf.shuffled_oprf);
+        let receiver_oprf_set = group_set(&receiver_oprf.shuffled_oprf);
+
+        let sender_shuffled_bitmap = membership_bitmap(&sender_oprf.shuffled_oprf, &receiver_oprf_set);
+        let receiver_original_bitmap =
+            membership_bitmap(&receiver_oprf.unshuffled_oprf, &sender_oprf_set);
+        let receiver_shuffled_bitmap =
+            membership_bitmap(&receiver_oprf.shuffled_oprf, &sender_oprf_set);
+
+        // Verify sender-set bitmap proof from peer.
+        let authenticated_sender_original_bitmap = self
+            .auth_vole_receiver
+            .commit_auth(channel, sender_set.len())
+            .map_err(|e| anyhow!("failed to receive authenticated sender original bitmap: {e}"))?;
+        verify_bitmap_shuffle(
+            &authenticated_sender_original_bitmap,
+            &sender_oprf.authenticated_permutation,
+            &sender_shuffled_bitmap,
+            rng,
+            &mut self.auth_vole_receiver,
+            channel,
+        )?;
+
+        // Prove receiver-set bitmap proof to peer using the same shuffled OPRF transcript.
+        let authenticated_receiver_original_bitmap = self
+            .auth_vole_sender
+            .commit_auth(channel, &receiver_original_bitmap)
+            .map_err(|e| anyhow!("failed to authenticate receiver original bitmap for proof: {e}"))?;
+        prove_bitmap_shuffle(
+            &authenticated_receiver_original_bitmap,
+            &receiver_oprf.authenticated_permutation,
+            &receiver_shuffled_bitmap,
+            &mut self.auth_vole_sender,
+            channel,
+        )?;
 
         ensure!(
-            sender_only_mq_rpmt_output.authenticated_sender_inputs.len()
-                == sender_only_mq_rpmt_output
-                    .authenticated_original_bitmap
-                    .len(),
+            sender_oprf.authenticated_inputs.len() == authenticated_sender_original_bitmap.len(),
             "two_side_psu sender-only input/bitmap length mismatch: inputs={} bitmap={}",
-            sender_only_mq_rpmt_output.authenticated_sender_inputs.len(),
-            sender_only_mq_rpmt_output
-                .authenticated_original_bitmap
-                .len()
+            sender_oprf.authenticated_inputs.len(),
+            authenticated_sender_original_bitmap.len()
         );
         ensure!(
-            receiver_only_mq_rpmt_output.authenticated_sender_inputs.len()
-                == receiver_only_mq_rpmt_output
-                    .authenticated_original_bitmap
-                    .len(),
+            receiver_oprf.authenticated_inputs.len() == authenticated_receiver_original_bitmap.len(),
             "two_side_psu receiver-only input/bitmap length mismatch: inputs={} bitmap={}",
-            receiver_only_mq_rpmt_output.authenticated_sender_inputs.len(),
-            receiver_only_mq_rpmt_output
-                .authenticated_original_bitmap
-                .len()
+            receiver_oprf.authenticated_inputs.len(),
+            authenticated_receiver_original_bitmap.len()
         );
         ensure!(
-            sender_only_mq_rpmt_output.authenticated_sender_inputs.len() == sender_only_triples.len(),
+            sender_oprf.authenticated_inputs.len() == sender_only_triples.len(),
             "two_side_psu sender-only input/triple length mismatch: inputs={} triples={}",
-            sender_only_mq_rpmt_output.authenticated_sender_inputs.len(),
+            sender_oprf.authenticated_inputs.len(),
             sender_only_triples.len()
         );
         ensure!(
-            receiver_only_mq_rpmt_output.authenticated_sender_inputs.len()
-                == receiver_only_triples.len(),
+            receiver_oprf.authenticated_inputs.len() == receiver_only_triples.len(),
             "two_side_psu receiver-only input/triple length mismatch: inputs={} triples={}",
-            receiver_only_mq_rpmt_output.authenticated_sender_inputs.len(),
+            receiver_oprf.authenticated_inputs.len(),
             receiver_only_triples.len()
         );
 
         // Complement the authenticated bitmap to obtain 1 - b for sender elements.
-        let authenticated_sender_complement_bitmap: Vec<BeDOZaReceiver> =
-            sender_only_mq_rpmt_output
-                .authenticated_original_bitmap
-                .iter()
-                .map(|share| (*share * -FE::one()) + FE::one())
-                .collect();
+        let authenticated_sender_complement_bitmap: Vec<BeDOZaReceiver> = authenticated_sender_original_bitmap
+            .iter()
+            .map(|share| (*share * -FE::one()) + FE::one())
+            .collect();
         // Complement the authenticated bitmap to obtain 1 - b for receiver elements.
         let authenticated_receiver_complement_bitmap: Vec<BeDOZaSender> =
-            receiver_only_mq_rpmt_output
-                .authenticated_original_bitmap
+            authenticated_receiver_original_bitmap
                 .iter()
                 .map(|share| (*share * -FE::one()) + FE::one())
                 .collect();
 
         let sender_only_shares = batch_multiply_cross_owned_sender(
-            &sender_only_mq_rpmt_output.authenticated_sender_inputs,
+            &sender_oprf.authenticated_inputs,
             &authenticated_sender_complement_bitmap,
             sender_only_triples,
             channel,
         )?;
         let receiver_only_shares = batch_multiply_cross_owned_receiver(
-            &receiver_only_mq_rpmt_output.authenticated_sender_inputs,
+            &receiver_oprf.authenticated_inputs,
             &authenticated_receiver_complement_bitmap,
             receiver_only_triples,
             channel,
@@ -165,20 +278,32 @@ impl TwoSidePsuSender {
 }
 
 pub struct TwoSidePsuReceiver {
-    sender_only_mq_rpmt: MqRpmtReceiver,
-    receiver_only_mq_rpmt: MqRpmtSender,
+    delta1: FE,
+    k1: FE,
+    auth_vole_sender: BufferedVoleSender,
+    auth_vole_receiver: BufferedVoleReceiver,
+    product_vole_sender: BufferedVoleSender,
+    product_vole_receiver: BufferedVoleReceiver,
 }
 
 impl TwoSidePsuReceiver {
     pub fn new(delta1: FE, k1: FE, channel: &mut SwankyChannel) -> Result<Self> {
-        let sender_only_mq_rpmt = MqRpmtReceiver::new(delta1, k1, channel)
-            .map_err(|e| anyhow!("init sender-only mq_rpmt failed: {e}"))?;
-        let receiver_only_mq_rpmt = MqRpmtSender::new(delta1, k1, channel)
-            .map_err(|e| anyhow!("init receiver-only mq_rpmt failed: {e}"))?;
+        let auth_vole_receiver = BufferedVoleReceiver::init(channel, delta1, LPN21)
+            .map_err(|e| anyhow!("init auth receiver VOLE failed: {e}"))?;
+        let auth_vole_sender = BufferedVoleSender::init(channel, LPN21)
+            .map_err(|e| anyhow!("init auth sender VOLE failed: {e}"))?;
+        let product_vole_receiver = BufferedVoleReceiver::init(channel, k1, LPN21)
+            .map_err(|e| anyhow!("init product receiver VOLE failed: {e}"))?;
+        let product_vole_sender = BufferedVoleSender::init(channel, LPN21)
+            .map_err(|e| anyhow!("init product sender VOLE failed: {e}"))?;
 
         Ok(Self {
-            sender_only_mq_rpmt,
-            receiver_only_mq_rpmt,
+            delta1,
+            k1,
+            auth_vole_sender,
+            auth_vole_receiver,
+            product_vole_sender,
+            product_vole_receiver,
         })
     }
 
@@ -205,73 +330,120 @@ impl TwoSidePsuReceiver {
             receiver_only_triples.len()
         );
 
-        let sender_only_mq_rpmt_output = self
-            .sender_only_mq_rpmt
-            .run(receiver_set, rng, channel)
-            .map_err(|e| anyhow!("sender-only mq_rpmt failed: {e}"))?;
-        let receiver_only_mq_rpmt_output = self
-            .receiver_only_mq_rpmt
-            .run(receiver_set, rng, channel)
-            .map_err(|e| anyhow!("receiver-only mq_rpmt failed: {e}"))?;
+        let sender_set_len = exchange_set_size(receiver_set.len(), channel)?;
+        ensure!(
+            sender_set_len > 1,
+            "two_side_psu receiver requires at least 2 sender inputs"
+        );
+        ensure!(
+            sender_set_len == sender_only_triples.len(),
+            "two_side_psu sender-only input/triple length mismatch: inputs={} triples={}",
+            sender_set_len,
+            sender_only_triples.len()
+        );
+
+        // Run shuffled OPRF once per role (shuffler + inputer), then reuse it for both PSU directions.
+        let sender_permutation = random_permutation(sender_set_len, rng);
+        let shuffler = Shuffler::new(self.delta1, self.k1);
+        let sender_oprf = shuffler.run_full_shuffled_oprf(
+            &sender_permutation,
+            rng,
+            &mut self.auth_vole_sender,
+            &mut self.auth_vole_receiver,
+            &mut self.product_vole_receiver,
+            channel,
+        )?;
+
+        let inputer = Inputer::new(self.delta1, self.k1);
+        let receiver_oprf = inputer.run_full_shuffled_oprf(
+            receiver_set,
+            rng,
+            &mut self.auth_vole_sender,
+            &mut self.auth_vole_receiver,
+            &mut self.product_vole_sender,
+            channel,
+        )?;
+
+        let sender_oprf_set = group_set(&sender_oprf.shuffled_oprf);
+        let receiver_oprf_set = group_set(&receiver_oprf.shuffled_oprf);
+
+        let sender_original_bitmap = membership_bitmap(&sender_oprf.unshuffled_oprf, &receiver_oprf_set);
+        let sender_shuffled_bitmap = membership_bitmap(&sender_oprf.shuffled_oprf, &receiver_oprf_set);
+        let receiver_shuffled_bitmap =
+            membership_bitmap(&receiver_oprf.shuffled_oprf, &sender_oprf_set);
+
+        // Prove sender-set bitmap proof to peer.
+        let authenticated_sender_original_bitmap = self
+            .auth_vole_sender
+            .commit_auth(channel, &sender_original_bitmap)
+            .map_err(|e| anyhow!("failed to authenticate sender original bitmap for proof: {e}"))?;
+        prove_bitmap_shuffle(
+            &authenticated_sender_original_bitmap,
+            &sender_oprf.authenticated_permutation,
+            &sender_shuffled_bitmap,
+            &mut self.auth_vole_sender,
+            channel,
+        )?;
+
+        // Verify receiver-set bitmap proof from peer.
+        let authenticated_receiver_original_bitmap = self
+            .auth_vole_receiver
+            .commit_auth(channel, receiver_set.len())
+            .map_err(|e| anyhow!("failed to receive authenticated receiver original bitmap: {e}"))?;
+        verify_bitmap_shuffle(
+            &authenticated_receiver_original_bitmap,
+            &receiver_oprf.authenticated_permutation,
+            &receiver_shuffled_bitmap,
+            rng,
+            &mut self.auth_vole_receiver,
+            channel,
+        )?;
 
         ensure!(
-            sender_only_mq_rpmt_output.authenticated_sender_inputs.len()
-                == sender_only_mq_rpmt_output
-                    .authenticated_original_bitmap
-                    .len(),
+            sender_oprf.authenticated_inputs.len() == authenticated_sender_original_bitmap.len(),
             "two_side_psu sender-only input/bitmap length mismatch: inputs={} bitmap={}",
-            sender_only_mq_rpmt_output.authenticated_sender_inputs.len(),
-            sender_only_mq_rpmt_output
-                .authenticated_original_bitmap
-                .len()
+            sender_oprf.authenticated_inputs.len(),
+            authenticated_sender_original_bitmap.len()
         );
         ensure!(
-            receiver_only_mq_rpmt_output.authenticated_sender_inputs.len()
-                == receiver_only_mq_rpmt_output
-                    .authenticated_original_bitmap
-                    .len(),
+            receiver_oprf.authenticated_inputs.len() == authenticated_receiver_original_bitmap.len(),
             "two_side_psu receiver-only input/bitmap length mismatch: inputs={} bitmap={}",
-            receiver_only_mq_rpmt_output.authenticated_sender_inputs.len(),
-            receiver_only_mq_rpmt_output
-                .authenticated_original_bitmap
-                .len()
+            receiver_oprf.authenticated_inputs.len(),
+            authenticated_receiver_original_bitmap.len()
         );
         ensure!(
-            sender_only_mq_rpmt_output.authenticated_sender_inputs.len() == sender_only_triples.len(),
+            sender_oprf.authenticated_inputs.len() == sender_only_triples.len(),
             "two_side_psu sender-only input/triple length mismatch: inputs={} triples={}",
-            sender_only_mq_rpmt_output.authenticated_sender_inputs.len(),
+            sender_oprf.authenticated_inputs.len(),
             sender_only_triples.len()
         );
         ensure!(
-            receiver_only_mq_rpmt_output.authenticated_sender_inputs.len()
-                == receiver_only_triples.len(),
+            receiver_oprf.authenticated_inputs.len() == receiver_only_triples.len(),
             "two_side_psu receiver-only input/triple length mismatch: inputs={} triples={}",
-            receiver_only_mq_rpmt_output.authenticated_sender_inputs.len(),
+            receiver_oprf.authenticated_inputs.len(),
             receiver_only_triples.len()
         );
 
         // Complement the authenticated bitmap to obtain 1 - b for sender elements.
-        let authenticated_sender_complement_bitmap: Vec<BeDOZaSender> = sender_only_mq_rpmt_output
-            .authenticated_original_bitmap
+        let authenticated_sender_complement_bitmap: Vec<BeDOZaSender> = authenticated_sender_original_bitmap
             .iter()
             .map(|share| (*share * -FE::one()) + FE::one())
             .collect();
         // Complement the authenticated bitmap to obtain 1 - b for receiver elements.
         let authenticated_receiver_complement_bitmap: Vec<BeDOZaReceiver> =
-            receiver_only_mq_rpmt_output
-                .authenticated_original_bitmap
+            authenticated_receiver_original_bitmap
                 .iter()
                 .map(|share| (*share * -FE::one()) + FE::one())
                 .collect();
 
         let sender_only_shares = batch_multiply_cross_owned_receiver(
-            &sender_only_mq_rpmt_output.authenticated_sender_inputs,
+            &sender_oprf.authenticated_inputs,
             &authenticated_sender_complement_bitmap,
             sender_only_triples,
             channel,
         )?;
         let receiver_only_shares = batch_multiply_cross_owned_sender(
-            &receiver_only_mq_rpmt_output.authenticated_sender_inputs,
+            &receiver_oprf.authenticated_inputs,
             &authenticated_receiver_complement_bitmap,
             receiver_only_triples,
             channel,
