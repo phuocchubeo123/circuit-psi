@@ -130,7 +130,6 @@ impl Shuffler {
         log_step("received authenticated k0 and authenticated k1");
 
         // 0.2) Receive authenticated x_i and r_i from inputer under delta_1.
-        authenticated_xis_out.reserve(n);
         vole_receiver
             .commit_auth_into(channel, n, authenticated_xis_out)
             .map_err(|e| anyhow!("failed to materialize receiver VOLE outputs: {e}"))?;
@@ -147,7 +146,6 @@ impl Shuffler {
             .iter()
             .map(|&idx| FE::from(idx as u64))
             .collect();
-        authenticated_pi_sender_out.reserve(n);
         vole_sender
             .commit_auth_into(channel, &permutation_fe, authenticated_pi_sender_out)
             .map_err(|e| anyhow!("failed to materialize sender VOLE inputs: {e}"))?;
@@ -194,7 +192,6 @@ impl Shuffler {
             .collect();
         log_step("computed authenticated (x_i + k0) commitments");
 
-        product_commitments_out.reserve(authenticated_inputs.len());
         vole_receiver
             .commit_auth_into(
                 channel,
@@ -224,7 +221,10 @@ impl Shuffler {
         vole_sender: &mut BufferedVoleSender,
         k1_mul_vole_receiver: &mut BufferedVoleReceiver,
         channel: &mut SwankyChannel,
-    ) -> Result<(Vec<FE>, Vec<BeDOZaReceiver>, Vec<BeDOZaSender>)> {
+        v_values_out: &mut Vec<FE>,
+        authenticated_u_receiver_out: &mut Vec<BeDOZaReceiver>,
+        authenticated_v_sender_out: &mut Vec<BeDOZaSender>,
+    ) -> Result<()> {
         ensure!(
             !authenticated_r_receiver.is_empty(),
             "step2 cannot run on empty r commitments"
@@ -234,14 +234,15 @@ impl Shuffler {
         let n = authenticated_r_receiver.len();
 
         // Should have u_i + v_i = r_i * k1
-        let v_values: Vec<FE> = k1_mul_vole_receiver
-            .commit_auth(channel, n)
+        let mut product_shares = Vec::with_capacity(n);
+        k1_mul_vole_receiver
+            .commit_auth_into(channel, n, &mut product_shares)
             .map_err(|e| {
                 anyhow!("failed to materialize receiver VOLE outputs for product shares: {e}")
-            })?
-            .into_iter()
-            .map(|r| r.tag())
-            .collect();
+            })?;
+        for r in &product_shares {
+            v_values_out.push(r.tag());
+        }
 
         let v0_value = k1_mul_vole_receiver
             .random_auth(channel, 1)
@@ -249,26 +250,31 @@ impl Shuffler {
             .tag();
 
         // 2) Receive inputer's authenticated u_i, r0 and u0 under delta_1.
-        let authenticated_u_receiver: Vec<BeDOZaReceiver> =
-            vole_receiver
-                .commit_auth(channel, n)
-                .map_err(|e| anyhow!("failed to materialize receiver VOLE outputs: {e}"))?;
+        vole_receiver
+            .commit_auth_into(channel, n, authenticated_u_receiver_out)
+            .map_err(|e| anyhow!("failed to materialize receiver VOLE outputs: {e}"))?;
 
-        let authenticated_r0_receiver = vole_receiver
-            .commit_auth(channel, 1)
-            .map_err(|e| anyhow!("failed to materialize receiver VOLE outputs: {e}"))?[0];
+        let mut authenticated_r0_receiver_buf = Vec::with_capacity(1);
+        vole_receiver
+            .commit_auth_into(channel, 1, &mut authenticated_r0_receiver_buf)
+            .map_err(|e| anyhow!("failed to materialize receiver VOLE outputs: {e}"))?;
+        let authenticated_r0_receiver = authenticated_r0_receiver_buf[0];
 
-        let authenticated_u0_receiver = vole_receiver
-            .commit_auth(channel, 1)
-            .map_err(|e| anyhow!("failed to materialize receiver VOLE outputs: {e}"))?[0];
+        let mut authenticated_u0_receiver_buf = Vec::with_capacity(1);
+        vole_receiver
+            .commit_auth_into(channel, 1, &mut authenticated_u0_receiver_buf)
+            .map_err(|e| anyhow!("failed to materialize receiver VOLE outputs: {e}"))?;
+        let authenticated_u0_receiver = authenticated_u0_receiver_buf[0];
 
         // 3) Send authenticated v0 and v_i under delta_0.
-        let authenticated_v0_sender = vole_sender
-            .commit_auth(channel, &[v0_value])
-            .map_err(|e| anyhow!("failed to materialize sender VOLE inputs: {e}"))?[0];
+        let mut authenticated_v0_sender_buf = Vec::with_capacity(1);
+        vole_sender
+            .commit_auth_into(channel, &[v0_value], &mut authenticated_v0_sender_buf)
+            .map_err(|e| anyhow!("failed to materialize sender VOLE inputs: {e}"))?;
+        let authenticated_v0_sender = authenticated_v0_sender_buf[0];
 
-        let authenticated_v_sender: Vec<BeDOZaSender> = vole_sender
-            .commit_auth(channel, &v_values)
+        vole_sender
+            .commit_auth_into(channel, v_values_out, authenticated_v_sender_out)
             .map_err(|e| anyhow!("failed to materialize sender VOLE inputs: {e}"))?;
 
         // 4) Jointly sample a seed, open r/u linear combinations, and check r*k1 = u + v.
@@ -278,7 +284,7 @@ impl Shuffler {
         let coeffs = random_fe_vec_from_rng(&mut seeded_rng, n)?;
 
         let u_linear =
-            linear_comb_receiver(&authenticated_u_receiver, &coeffs, "step2 u linear comb")?
+            linear_comb_receiver(authenticated_u_receiver_out, &coeffs, "step2 u linear comb")?
                 + authenticated_u0_receiver;
         let r_linear =
             linear_comb_receiver(authenticated_r_receiver, &coeffs, "step2 r linear comb")?
@@ -289,7 +295,7 @@ impl Shuffler {
 
         let v_linear_value = coeffs
             .iter()
-            .zip(v_values.iter())
+            .zip(v_values_out.iter())
             .map(|(&coeff, &v_i)| coeff * v_i)
             .fold(FE::zero(), |acc, term| acc + term)
             + v0_value;
@@ -299,13 +305,14 @@ impl Shuffler {
         );
 
         // 5) Open authenticated (r*k1 - u - v) so inputer can verify with its MAC.
-        let v_linear = linear_comb_sender(&authenticated_v_sender, &coeffs, "step2 v linear comb")?
-            + authenticated_v0_sender;
+        let v_linear =
+            linear_comb_sender(authenticated_v_sender_out, &coeffs, "step2 v linear comb")?
+                + authenticated_v0_sender;
         let authenticated_r_times_k1_minus_uv =
             (*authenticated_k1_sender * r_open) - u_open - v_linear;
         send_open_shares(&[authenticated_r_times_k1_minus_uv], channel)?;
 
-        Ok((v_values, authenticated_u_receiver, authenticated_v_sender))
+        Ok(())
     }
 
     pub fn step3_receive_ri_x_plus_k0_plus_ui_and_receive_reauthenticate_and_inverse<RNG: Rng>(
@@ -661,15 +668,20 @@ impl Shuffler {
             channel,
             &mut authenticated_r_x_plus_k0_receiver,
         )?;
-        let (v_values, authenticated_u_receiver, authenticated_v_sender) = self
-            .step2_vole_share_r_times_k1_and_authenticate(
-                &authenticated_ri_receiver,
-                shuffler_key_share.bedoza_sender(),
-                auth_vole_receiver,
-                auth_vole_sender,
-                k1_mul_vole_receiver,
-                channel,
-            )?;
+        let mut v_values = Vec::with_capacity(permutation.len());
+        let mut authenticated_u_receiver = Vec::with_capacity(permutation.len());
+        let mut authenticated_v_sender = Vec::with_capacity(permutation.len());
+        self.step2_vole_share_r_times_k1_and_authenticate(
+            &authenticated_ri_receiver,
+            shuffler_key_share.bedoza_sender(),
+            auth_vole_receiver,
+            auth_vole_sender,
+            k1_mul_vole_receiver,
+            channel,
+            &mut v_values,
+            &mut authenticated_u_receiver,
+            &mut authenticated_v_sender,
+        )?;
         let (_r_x_k_values, inverse_values, authenticated_inverse_sender) = self
             .step3_receive_ri_x_plus_k0_plus_ui_and_receive_reauthenticate_and_inverse(
                 &authenticated_r_x_plus_k0_receiver,

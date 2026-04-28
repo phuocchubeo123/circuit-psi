@@ -156,8 +156,10 @@ fn main() -> Result<()> {
         )
     })?;
 
-    let (v_values, authenticated_u_receiver, authenticated_v_sender) =
-        timed_channel("step2", &mut channel, |channel| {
+    let mut v_values = Vec::with_capacity(permutation.len());
+    let mut authenticated_u_receiver = Vec::with_capacity(permutation.len());
+    let mut authenticated_v_sender = Vec::with_capacity(permutation.len());
+    timed_channel("step2", &mut channel, |channel| {
         shuffler.step2_vole_share_r_times_k1_and_authenticate(
             &authenticated_ri_receiver,
             shuffler_key_share.bedoza_sender(),
@@ -165,6 +167,9 @@ fn main() -> Result<()> {
             &mut auth_vole_sender,
             &mut k1_mul_vole_receiver,
             channel,
+            &mut v_values,
+            &mut authenticated_u_receiver,
+            &mut authenticated_v_sender,
         )
     })?;
 

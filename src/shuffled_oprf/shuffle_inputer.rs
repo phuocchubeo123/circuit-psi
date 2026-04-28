@@ -84,7 +84,6 @@ impl Inputer {
         log_step("authenticated k0 and received authenticated k1");
 
         // Inputer commits its local input values with VOLE under the shuffler's key delta_1.
-        authenticated_xis_out.reserve(vals.len());
         vole_sender
             .commit_auth_into(channel, vals, authenticated_xis_out)
             .map_err(|e| anyhow!("Failed to authenticate input values: {e}"))?;
@@ -98,7 +97,6 @@ impl Inputer {
         log_step("sampled authenticated random r_i values");
 
         // Inputs receives authenticated permutation pi
-        authenticated_pi_out.reserve(vals.len());
         vole_receiver
             .commit_auth_into(channel, vals.len(), authenticated_pi_out)
             .map_err(|e| anyhow!("Failed to authenticate the permutation: {e}"))?;
@@ -148,7 +146,6 @@ impl Inputer {
         }
         log_step("computed clear r_i * (x_i + k0) values");
 
-        authenticated_r_times_x_plus_k0_out.reserve(r_times_x_plus_k0_values.len());
         vole_sender
             .commit_auth_into(
                 channel,
@@ -178,39 +175,55 @@ impl Inputer {
         vole_receiver: &mut BufferedVoleReceiver,
         k1_vole_sender: &mut BufferedVoleSender,
         channel: &mut SwankyChannel,
-    ) -> Result<(Vec<FE>, Vec<BeDOZaSender>, Vec<BeDOZaReceiver>)> {
+        us_out: &mut Vec<FE>,
+        authenticated_us_out: &mut Vec<BeDOZaSender>,
+        authenticated_vs_out: &mut Vec<BeDOZaReceiver>,
+    ) -> Result<()> {
         // 1) Use VOLE to produce additive shares of r_i * k1:
         //    inputer gets u_i, shuffler gets v_i, with u_i + v_i = r_i * k1.
-        let r_values: Vec<FE> = authenticated_rs.iter().map(|r| r.val()).collect();
-        let k1_auth_ris = k1_vole_sender
-            .commit_auth(channel, &r_values)
+        let mut r_values: Vec<FE> = Vec::with_capacity(authenticated_rs.len());
+        for r in authenticated_rs {
+            r_values.push(r.val());
+        }
+
+        let mut k1_auth_ris = Vec::with_capacity(r_values.len());
+        k1_vole_sender
+            .commit_auth_into(channel, &r_values, &mut k1_auth_ris)
             .map_err(|e| anyhow!("Failed to get secret shares of ri * k1: {e}"))?;
-        let us: Vec<FE> = k1_auth_ris.iter().map(|share| share.pad()).collect();
+        for share in &k1_auth_ris {
+            us_out.push(share.pad());
+        }
 
         let k1_auth_rand = k1_vole_sender
             .random_auth(channel, 1)
             .map_err(|e| anyhow!("Failed to get secret shares of random r0 * k1: {e}"))?[0];
 
         // 2) Inputer authenticates u_i under shuffler key delta_1.
-        let authenticated_us = vole_sender
-            .commit_auth(channel, &us)
+        vole_sender
+            .commit_auth_into(channel, us_out, authenticated_us_out)
             .map_err(|e| anyhow!("Failed to authenticate ui values: {e}"))?;
 
-        let authenticated_r0 = vole_sender
-            .commit_auth(channel, &[k1_auth_rand.val()])
-            .map_err(|e| anyhow!("Failed to authenticate r0 value: {e}"))?[0];
+        let mut authenticated_r0_buf = Vec::with_capacity(1);
+        vole_sender
+            .commit_auth_into(channel, &[k1_auth_rand.val()], &mut authenticated_r0_buf)
+            .map_err(|e| anyhow!("Failed to authenticate r0 value: {e}"))?;
+        let authenticated_r0 = authenticated_r0_buf[0];
 
-        let authenticated_u0 = vole_sender
-            .commit_auth(channel, &[k1_auth_rand.pad()])
-            .map_err(|e| anyhow!("Faile to authenticate u0 value: {e}"))?[0];
+        let mut authenticated_u0_buf = Vec::with_capacity(1);
+        vole_sender
+            .commit_auth_into(channel, &[k1_auth_rand.pad()], &mut authenticated_u0_buf)
+            .map_err(|e| anyhow!("Faile to authenticate u0 value: {e}"))?;
+        let authenticated_u0 = authenticated_u0_buf[0];
 
-        let authenticated_v0 = vole_receiver
-            .commit_auth(channel, 1)
-            .map_err(|e| anyhow!("Failed to receive authenticated v0 value: {e}"))?[0];
+        let mut authenticated_v0_buf = Vec::with_capacity(1);
+        vole_receiver
+            .commit_auth_into(channel, 1, &mut authenticated_v0_buf)
+            .map_err(|e| anyhow!("Failed to receive authenticated v0 value: {e}"))?;
+        let authenticated_v0 = authenticated_v0_buf[0];
 
         // 3) Shuffler authenticates v_i under inputer key delta_0 (inputer receives tags).
-        let authenticated_vs = vole_receiver
-            .commit_auth(channel, r_values.len())
+        vole_receiver
+            .commit_auth_into(channel, r_values.len(), authenticated_vs_out)
             .map_err(|e| anyhow!("Failed to receive authenticated vi values: {e}"))?;
 
         // 4) Prove the correctness of authenticated u_i and r_i using a jointly sampled seed.
@@ -219,7 +232,7 @@ impl Inputer {
         let mut seeded_rng = StdRng::from_seed(seed);
         let coeffs = random_fe_vec_from_rng(&mut seeded_rng, authenticated_rs.len())?;
 
-        let u_linear = linear_comb_sender(&authenticated_us, &coeffs, "step2 u linear comb")?
+        let u_linear = linear_comb_sender(authenticated_us_out, &coeffs, "step2 u linear comb")?
             + authenticated_u0;
         let r_linear = linear_comb_sender(authenticated_rs, &coeffs, "step2 r linear comb")?
             + authenticated_r0;
@@ -230,7 +243,8 @@ impl Inputer {
 
         // 5) Prove the correctness of authenticated vi
         // Currently I do it by proving auth_k1 * r_linear - u_linear - auth_v_linear = 0.
-        let v_linear = linear_comb_receiver(&authenticated_vs, &coeffs, "step2 v linear comb")?
+        let v_linear =
+            linear_comb_receiver(authenticated_vs_out, &coeffs, "step2 v linear comb")?
             + authenticated_v0;
         let authenticated_r_times_k1_minus_uv =
             authenticated_k1 * r_linear.val() - u_linear.val() - v_linear;
@@ -242,7 +256,7 @@ impl Inputer {
             "step2 consistency check failed: r_linear * k1 - u_linear - v_linear != 0"
         );
 
-        Ok((us, authenticated_us, authenticated_vs))
+        Ok(())
     }
 
     pub fn step3_open_ri_x_plus_k0_plus_ui_and_receive_reauthenticate(
@@ -590,15 +604,20 @@ impl Inputer {
             &mut authenticated_r_x_plus_k0,
         )?;
 
-        let (_u_values, authenticated_u, authenticated_v) = self
-            .step2_vole_share_r_times_k1_and_authenticate(
-                &authenticated_ri,
-                key_shares.bedoza_receiver(),
-                auth_vole_sender,
-                auth_vole_receiver,
-                k1_mul_vole_sender,
-                channel,
-            )?;
+        let mut u_values = Vec::with_capacity(x_values.len());
+        let mut authenticated_u = Vec::with_capacity(x_values.len());
+        let mut authenticated_v = Vec::with_capacity(x_values.len());
+        self.step2_vole_share_r_times_k1_and_authenticate(
+            &authenticated_ri,
+            key_shares.bedoza_receiver(),
+            auth_vole_sender,
+            auth_vole_receiver,
+            k1_mul_vole_sender,
+            channel,
+            &mut u_values,
+            &mut authenticated_u,
+            &mut authenticated_v,
+        )?;
 
         let authenticated_r_x_k_inverse = self
             .step3_open_ri_x_plus_k0_plus_ui_and_receive_reauthenticate(
