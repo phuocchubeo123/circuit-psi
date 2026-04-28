@@ -75,6 +75,17 @@ fn prove_bitmap_shuffle(
         "mq_rpmt shuffle proof requires at least 2 sender inputs"
     );
 
+    let start = std::time::Instant::now();
+    let mut step = 0usize;
+    let mut log_step = |description: &str| {
+        step += 1;
+        println!(
+            "[mq_rpmt::prove_bitmap_shuffle] Step {step}: {description} (elapsed: {:?})",
+            start.elapsed()
+        );
+    };
+    log_step("validated input lengths and minimum size");
+
     let challenges = receive_fe_vec(channel)
         .map_err(|e| anyhow!("failed to receive mq_rpmt shuffle challenges: {e}"))?;
     ensure!(
@@ -85,17 +96,21 @@ fn prove_bitmap_shuffle(
     let alpha = challenges[0];
     let beta = challenges[1];
     let gamma = challenges[2];
+    log_step("received verifier challenges alpha, beta, gamma");
 
     let authenticated_permuted_terms: Vec<BeDOZaSender> = authenticated_permutation
         .iter()
         .zip(shuffled_bitmap.iter())
         .map(|(pi_i, &bit_i)| (*pi_i * beta) + (alpha + gamma * bit_i))
         .collect();
+    log_step("computed authenticated permuted terms");
     let permuted_term_values: Vec<FE> = authenticated_permutation
         .iter()
         .zip(shuffled_bitmap.iter())
         .map(|(pi_i, &bit_i)| alpha + beta * pi_i.val() + gamma * bit_i)
         .collect();
+    log_step("computed clear permuted term values");
+
     let mut permuted_running = permuted_term_values[0];
     let permuted_running_products: Vec<FE> = permuted_term_values
         .iter()
@@ -105,17 +120,20 @@ fn prove_bitmap_shuffle(
             permuted_running
         })
         .collect();
+    log_step("built permuted running products");
     let authenticated_permuted_running_products = auth_vole_sender
         .commit_auth(channel, &permuted_running_products)
         .map_err(|e| {
             anyhow!("permuted bitmap chain: failed to authenticate running products: {e}")
         })?;
+    log_step("authenticated permuted running products");
     let mut permuted_left_chain = Vec::with_capacity(authenticated_permuted_running_products.len());
     permuted_left_chain.push(authenticated_permuted_terms[0]);
     permuted_left_chain.extend_from_slice(
         &authenticated_permuted_running_products
             [..authenticated_permuted_running_products.len() - 1],
     );
+    log_step("assembled permuted left-chain witnesses");
     wolverine_batch_mul_prove(
         &permuted_left_chain,
         &authenticated_permuted_terms[1..],
@@ -124,17 +142,22 @@ fn prove_bitmap_shuffle(
         channel,
     )
     .map_err(|e| anyhow!("permuted bitmap chain: Wolverine chain proof failed: {e}"))?;
+    log_step("proved permuted chain multiplication constraints");
 
     let authenticated_original_terms: Vec<BeDOZaSender> = authenticated_original_bitmap
         .iter()
         .enumerate()
         .map(|(i, bit_i)| (*bit_i * gamma) + (alpha + beta * FE::from(i as u64)))
         .collect();
+    log_step("computed authenticated original terms");
+
     let original_term_values: Vec<FE> = authenticated_original_bitmap
         .iter()
         .enumerate()
         .map(|(i, bit_i)| alpha + beta * FE::from(i as u64) + gamma * bit_i.val())
         .collect();
+    log_step("computed clear original term values");
+
     let mut original_running = original_term_values[0];
     let original_running_products: Vec<FE> = original_term_values
         .iter()
@@ -144,17 +167,23 @@ fn prove_bitmap_shuffle(
             original_running
         })
         .collect();
+    log_step("built original running products");
+
     let authenticated_original_running_products = auth_vole_sender
         .commit_auth(channel, &original_running_products)
         .map_err(|e| {
             anyhow!("original bitmap chain: failed to authenticate running products: {e}")
         })?;
+    log_step("authenticated original running products");
+
     let mut original_left_chain = Vec::with_capacity(authenticated_original_running_products.len());
     original_left_chain.push(authenticated_original_terms[0]);
     original_left_chain.extend_from_slice(
         &authenticated_original_running_products
             [..authenticated_original_running_products.len() - 1],
     );
+    log_step("assembled original left-chain witnesses");
+
     wolverine_batch_mul_prove(
         &original_left_chain,
         &authenticated_original_terms[1..],
@@ -163,6 +192,7 @@ fn prove_bitmap_shuffle(
         channel,
     )
     .map_err(|e| anyhow!("original bitmap chain: Wolverine chain proof failed: {e}"))?;
+    log_step("proved original chain multiplication constraints");
 
     send_open_shares(
         &[
@@ -174,6 +204,7 @@ fn prove_bitmap_shuffle(
         channel,
     )
     .map_err(|e| anyhow!("failed to open mq_rpmt final chain products: {e}"))?;
+    log_step("opened final permuted/original chain products");
 
     Ok(())
 }
@@ -202,27 +233,46 @@ fn verify_bitmap_shuffle<RNG: Rng>(
         authenticated_original_bitmap.len() > 1,
         "mq_rpmt shuffle verification requires at least 2 sender inputs"
     );
+    let start = std::time::Instant::now();
+    let mut step = 0usize;
+    let mut log_step = |description: &str| {
+        step += 1;
+        println!(
+            "[mq_rpmt::verify_bitmap_shuffle] Step {step}: {description} (elapsed: {:?})",
+            start.elapsed()
+        );
+    };
+    log_step("validated input lengths and minimum size");
 
     let alpha = FE::from_bytes_le_mod_order(&rng.random::<[u8; 32]>());
     let beta = FE::from_bytes_le_mod_order(&rng.random::<[u8; 32]>());
     let gamma = FE::from_bytes_le_mod_order(&rng.random::<[u8; 32]>());
+    log_step("sampled verifier challenges alpha, beta, gamma");
+
     send_fe_vec(&[alpha, beta, gamma], channel)
         .map_err(|e| anyhow!("failed to send mq_rpmt shuffle challenges: {e}"))?;
+    log_step("sent verifier challenges to prover");
 
     let authenticated_permuted_terms: Vec<BeDOZaReceiver> = authenticated_permutation
         .iter()
         .zip(shuffled_bitmap.iter())
         .map(|(pi_i, &bit_i)| (*pi_i * beta) + (alpha + gamma * bit_i))
         .collect();
+    log_step("computed authenticated permuted terms");
+
     let authenticated_permuted_running_products = auth_vole_receiver
         .commit_auth(channel, authenticated_permuted_terms.len() - 1)
         .map_err(|e| anyhow!("permuted bitmap chain: failed to receive running products: {e}"))?;
+    log_step("received authenticated permuted running products");
+
     let mut permuted_left_chain = Vec::with_capacity(authenticated_permuted_running_products.len());
     permuted_left_chain.push(authenticated_permuted_terms[0]);
     permuted_left_chain.extend_from_slice(
         &authenticated_permuted_running_products
             [..authenticated_permuted_running_products.len() - 1],
     );
+    log_step("assembled permuted left-chain witnesses");
+
     wolverine_batch_mul_verify(
         &permuted_left_chain,
         &authenticated_permuted_terms[1..],
@@ -231,21 +281,28 @@ fn verify_bitmap_shuffle<RNG: Rng>(
         channel,
     )
     .map_err(|e| anyhow!("permuted bitmap chain: Wolverine chain verification failed: {e}"))?;
+    log_step("verified permuted chain multiplication constraints");
 
     let authenticated_original_terms: Vec<BeDOZaReceiver> = authenticated_original_bitmap
         .iter()
         .enumerate()
         .map(|(i, bit_i)| (*bit_i * gamma) + (alpha + beta * FE::from(i as u64)))
         .collect();
+    log_step("computed authenticated original terms");
+
     let authenticated_original_running_products = auth_vole_receiver
         .commit_auth(channel, authenticated_original_terms.len() - 1)
         .map_err(|e| anyhow!("original bitmap chain: failed to receive running products: {e}"))?;
+    log_step("received authenticated original running products");
+
     let mut original_left_chain = Vec::with_capacity(authenticated_original_running_products.len());
     original_left_chain.push(authenticated_original_terms[0]);
     original_left_chain.extend_from_slice(
         &authenticated_original_running_products
             [..authenticated_original_running_products.len() - 1],
     );
+    log_step("assembled original left-chain witnesses");
+
     wolverine_batch_mul_verify(
         &original_left_chain,
         &authenticated_original_terms[1..],
@@ -254,6 +311,7 @@ fn verify_bitmap_shuffle<RNG: Rng>(
         channel,
     )
     .map_err(|e| anyhow!("original bitmap chain: Wolverine chain verification failed: {e}"))?;
+    log_step("verified original chain multiplication constraints");
 
     let opened = receive_open_shares(
         &[
@@ -265,10 +323,13 @@ fn verify_bitmap_shuffle<RNG: Rng>(
         channel,
     )
     .map_err(|e| anyhow!("failed to receive mq_rpmt final chain products: {e}"))?;
+    log_step("received opened final permuted/original chain products");
+
     ensure!(
         opened[0] == opened[1],
         "mq_rpmt shuffle proof failed: final chain products differ"
     );
+    log_step("checked equality of final chain products");
 
     Ok(())
 }
