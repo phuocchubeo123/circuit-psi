@@ -449,9 +449,6 @@ impl Inputer {
         authenticated_xi_times_inverse: &[BeDOZaReceiver],
         channel: &mut SwankyChannel,
     ) -> Result<Vec<Group>> {
-        let shuffled_oprf = receive_group_elements(channel)
-            .map_err(|e| anyhow!("step15 failed to receive shuffled OPRF points: {}", e))?;
-
         // Precompute both tag/MSM products before reading the proof batches so the peer can keep
         // writing while we spend time on local multi-scalar multiplications.
         let mut tag_scratch = Vec::with_capacity(authenticated_xi_times_inverse.len());
@@ -471,10 +468,14 @@ impl Inputer {
                 .iter()
                 .map(|bedoza_receiver| bedoza_receiver.tag()),
         );
+        let shuffled_oprf = receive_group_elements(channel)
+            .map_err(|e| anyhow!("step15 failed to receive shuffled OPRF points: {}", e))?;
+
         let shuffled_oprf_x_powers_tag_product =
             msm_pippenger(&shuffled_oprf, &tag_scratch).map_err(|e| {
                 anyhow!("Failed to get multi-exponentiation for shuffled_oprf^x_powers tags: {e}")
             })?;
+
 
         // 1) Receive and verify the left hand side
         // Shuffler sends [opened_left_product, pad_product] in one batch.
