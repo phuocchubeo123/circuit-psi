@@ -44,10 +44,13 @@ pub fn wolverine_batch_mul_prove(
     vole_sender: &mut BufferedVoleSender,
     channel: &mut SwankyChannel,
 ) -> Result<()> {
+    let start = std::time::Instant::now();
     check_lengths(a, b, c, "wolverine_batch_mul_prove")?;
     let dummy_x = vole_sender
         .random_auth(channel, 1)
         .map_err(|e| anyhow!("failed to authenticate Wolverine dummy x: {e}"))?[0];
+
+    println!("Wolverine until here: {:?}", start.elapsed());
 
     // Verifier samples and sends challenge seed.
     let seed_raw = channel
@@ -58,12 +61,20 @@ pub fn wolverine_batch_mul_prove(
         "failed to receive Wolverine seed: expected 32 bytes, got {}",
         seed_raw.len()
     );
+
+    println!("Wolverine until here: {:?}", start.elapsed());
+
     let mut seed = [0u8; 32];
     seed.copy_from_slice(&seed_raw);
     let mut seeded_rng = StdRng::from_seed(seed);
     let coeffs = random_fe_vec_from_rng(&mut seeded_rng, a.len() + 1)?;
+
+    println!("Wolverine until here: {:?}", start.elapsed());
+
     let (mul_coeffs, dummy_coeffs) = coeffs.split_at(a.len());
     let dummy_coeff = dummy_coeffs[0];
+
+    println!("Wolverine until here: {:?}", start.elapsed());
 
     // With t_x = delta * x - pad_x, we have
     // t_a * t_b - delta * t_c = delta * (pad_c - pad_a * b - pad_b * a) + pad_a * pad_b
@@ -77,20 +88,28 @@ pub fn wolverine_batch_mul_prove(
         })
         .fold(FE::zero(), |acc, term| acc + term);
 
+    println!("Wolverine until here: {:?}", start.elapsed());
+
     let mu_batch_mul = mul_coeffs
         .iter()
         .zip(a.iter().zip(b.iter()))
         .map(|(&eta_i, (a_i, b_i))| eta_i * (a_i.pad() * b_i.pad()))
         .fold(FE::zero(), |acc, term| acc + term);
 
+    println!("Wolverine until here: {:?}", start.elapsed());
+
     // Dummy linear relation: t = delta * x - pad.
     // This contributes delta * x - pad to the checker, so lambda_dummy = x and mu_dummy = -pad.
     let lambda_batch = lambda_batch_mul + dummy_coeff * dummy_x.val();
     let mu_batch = mu_batch_mul - dummy_coeff * dummy_x.pad();
 
+    println!("Wolverine until here: {:?}", start.elapsed());
+
     send_fe(lambda_batch, channel)
         .map_err(|e| anyhow!("failed to send Wolverine lambda batch: {}", e))?;
     send_fe(mu_batch, channel).map_err(|e| anyhow!("failed to send Wolverine mu batch: {}", e))?;
+
+    println!("Wolverine until here: {:?}", start.elapsed());
 
     Ok(())
 }
@@ -102,10 +121,29 @@ pub fn wolverine_batch_mul_verify(
     vole_receiver: &mut BufferedVoleReceiver,
     channel: &mut SwankyChannel,
 ) -> Result<()> {
+    let start = std::time::Instant::now();
     check_lengths(a, b, c, "wolverine_batch_mul_verify")?;
     let dummy_v = vole_receiver
         .random_auth(channel, 1)
         .map_err(|e| anyhow!("failed to authenticate Wolverine dummy x: {e}"))?[0];
+
+    println!(
+        "[wolverine_batch_mul_verify] after random_auth (elapsed: {:?})",
+        start.elapsed()
+    );
+
+    // Send the challenge seed early so prover-side coefficient work can overlap
+    // with verifier-side key-consistency checks.
+    let mut rng = rand::rng();
+    let seed: [u8; 32] = rng.random::<[u8; 32]>();
+    channel
+        .send(&seed)
+        .map_err(|e| anyhow!("failed to send Wolverine seed: {}", e))?;
+
+    println!(
+        "[wolverine_batch_mul_verify] sent seed (elapsed: {:?})",
+        start.elapsed()
+    );
 
     let delta_1 = a[0].key();
     for (i, (a_i, b_i, c_i)) in a
@@ -126,11 +164,10 @@ pub fn wolverine_batch_mul_verify(
         "wolverine_batch_mul_verify: dummy key mismatch (expected delta_1)"
     );
 
-    let mut rng = rand::rng();
-    let seed: [u8; 32] = rng.random::<[u8; 32]>();
-    channel
-        .send(&seed)
-        .map_err(|e| anyhow!("failed to send Wolverine seed: {}", e))?;
+    println!(
+        "[wolverine_batch_mul_verify] finished key checks (elapsed: {:?})",
+        start.elapsed()
+    );
 
     let mut seeded_rng = StdRng::from_seed(seed);
     let coeffs = random_fe_vec_from_rng(&mut seeded_rng, a.len() + 1)?;
@@ -223,10 +260,28 @@ pub fn wolverine_batch_mul_public_output_verify(
     vole_receiver: &mut BufferedVoleReceiver,
     channel: &mut SwankyChannel,
 ) -> Result<()> {
+    let start = std::time::Instant::now();
     check_lengths_mixed(a, b, public_c, "wolverine_batch_mul_public_output_verify")?;
     let dummy_x = vole_receiver
         .random_auth(channel, 1)
         .map_err(|e| anyhow!("failed to authenticate Wolverine public-output dummy x: {e}"))?[0];
+
+    println!(
+        "[wolverine_batch_mul_public_output_verify] after random_auth (elapsed: {:?})",
+        start.elapsed()
+    );
+
+    // Same overlap optimization as wolverine_batch_mul_verify.
+    let mut rng = rand::rng();
+    let seed: [u8; 32] = rng.random::<[u8; 32]>();
+    channel
+        .send(&seed)
+        .map_err(|e| anyhow!("failed to send Wolverine public-output seed: {}", e))?;
+
+    println!(
+        "[wolverine_batch_mul_public_output_verify] sent seed (elapsed: {:?})",
+        start.elapsed()
+    );
 
     let delta = a[0].key();
     for (i, (a_i, b_i)) in a.iter().zip(b.iter()).enumerate() {
@@ -241,11 +296,10 @@ pub fn wolverine_batch_mul_public_output_verify(
         "wolverine_batch_mul_public_output_verify: dummy key mismatch"
     );
 
-    let mut rng = rand::rng();
-    let seed: [u8; 32] = rng.random::<[u8; 32]>();
-    channel
-        .send(&seed)
-        .map_err(|e| anyhow!("failed to send Wolverine public-output seed: {}", e))?;
+    println!(
+        "[wolverine_batch_mul_public_output_verify] finished key checks (elapsed: {:?})",
+        start.elapsed()
+    );
 
     let mut seeded_rng = StdRng::from_seed(seed);
     let coeffs = random_fe_vec_from_rng(&mut seeded_rng, a.len() + 1)?;

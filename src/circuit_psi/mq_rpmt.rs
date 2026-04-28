@@ -104,19 +104,13 @@ pub fn prove_bitmap_shuffle(
         .map(|(pi_i, &bit_i)| (*pi_i * beta) + (alpha + gamma * bit_i))
         .collect();
     log_step("computed authenticated permuted terms");
-    let permuted_term_values: Vec<FE> = authenticated_permutation
-        .iter()
-        .zip(shuffled_bitmap.iter())
-        .map(|(pi_i, &bit_i)| alpha + beta * pi_i.val() + gamma * bit_i)
-        .collect();
-    log_step("computed clear permuted term values");
 
-    let mut permuted_running = permuted_term_values[0];
-    let permuted_running_products: Vec<FE> = permuted_term_values
+    let mut permuted_running = authenticated_permuted_terms[0].val();
+    let permuted_running_products: Vec<FE> = authenticated_permuted_terms
         .iter()
         .skip(1)
         .map(|&term| {
-            permuted_running *= term;
+            permuted_running *= term.val();
             permuted_running
         })
         .collect();
@@ -151,19 +145,12 @@ pub fn prove_bitmap_shuffle(
         .collect();
     log_step("computed authenticated original terms");
 
-    let original_term_values: Vec<FE> = authenticated_original_bitmap
-        .iter()
-        .enumerate()
-        .map(|(i, bit_i)| alpha + beta * FE::from(i as u64) + gamma * bit_i.val())
-        .collect();
-    log_step("computed clear original term values");
-
-    let mut original_running = original_term_values[0];
-    let original_running_products: Vec<FE> = original_term_values
+    let mut original_running = authenticated_original_terms[0].val();
+    let original_running_products: Vec<FE> = authenticated_original_terms
         .iter()
         .skip(1)
         .map(|&term| {
-            original_running *= term;
+            original_running *= term.val();
             original_running
         })
         .collect();
