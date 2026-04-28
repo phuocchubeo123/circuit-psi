@@ -141,10 +141,7 @@ fn main() -> Result<()> {
         )
     })?;
 
-    let mut u_values = Vec::with_capacity(x_values.len());
-    let mut authenticated_u = Vec::with_capacity(x_values.len());
-    let mut authenticated_v = Vec::with_capacity(x_values.len());
-    timed_channel("step2", &mut channel, |channel| {
+    let (_u_values, authenticated_u, authenticated_v) = timed_channel("step2", &mut channel, |channel| {
         inputer.step2_vole_share_r_times_k1_and_authenticate(
             &authenticated_ri,
             key_shares.bedoza_receiver(),
@@ -152,9 +149,6 @@ fn main() -> Result<()> {
             &mut auth_vole_receiver,
             &mut k1_mul_vole_sender,
             channel,
-            &mut u_values,
-            &mut authenticated_u,
-            &mut authenticated_v,
         )
     })?;
 
