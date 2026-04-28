@@ -5,14 +5,14 @@ use super::{
 use crate::{
     bedoza::{BeDOZa, bedoza_receiver::BeDOZaReceiver, bedoza_sender::BeDOZaSender},
     math::{
-        defines::FE,
+        defines::{FE, random_fe_vec_from_rng},
         group::{Group, msm_pippenger, receive_group_elements, send_group_elements},
     },
     tcp_channel::SwankyChannel,
     vole::vole_buffer::{BufferedVoleReceiver, BufferedVoleSender},
 };
 use anyhow::{Result, anyhow, ensure};
-use rand::Rng;
+use rand::{Rng, RngExt, SeedableRng, rngs::StdRng};
 
 pub struct TwoSideShufflerOutput {
     pub shuffler_output: ShufflerOutput,
@@ -33,6 +33,112 @@ struct ShufflerStep6Precomputed {
     left_pad_product: Group,
     opened_right_product: Group,
     right_pad_product: Group,
+}
+
+fn run_merged_step4(
+    inputer_authenticated_ri_sender: &[BeDOZaSender],
+    shuffler_authenticated_ri_receiver: &[BeDOZaReceiver],
+    shuffler_delta: FE,
+    channel: &mut SwankyChannel,
+) -> Result<(Vec<Group>, Vec<Group>)> {
+    ensure!(
+        !inputer_authenticated_ri_sender.is_empty(),
+        "step4 cannot run on empty inputer ri commitments"
+    );
+    ensure!(
+        !shuffler_authenticated_ri_receiver.is_empty(),
+        "step4 cannot run on empty shuffler ri commitments"
+    );
+
+    // Inputer-role precompute: g^ri for our local sender-side commitments.
+    let g_ri_inputer: Vec<Group> = inputer_authenticated_ri_sender
+        .iter()
+        .map(|ri| Group::base_point().scalar_mul(&ri.val()))
+        .collect();
+
+    // Shuffler-role precompute: sample seed/alphas and derive g^{sum alpha_i * tag_i}.
+    let mut sampling_rng = rand::rng();
+    let mut seed_for_peer_inputer = [0u8; 32];
+    sampling_rng.fill(&mut seed_for_peer_inputer);
+    let mut shuffler_seeded_rng = StdRng::from_seed(seed_for_peer_inputer);
+    let shuffler_alphas = random_fe_vec_from_rng(
+        &mut shuffler_seeded_rng,
+        shuffler_authenticated_ri_receiver.len(),
+    )?;
+    let shuffler_tag_linear = shuffler_authenticated_ri_receiver
+        .iter()
+        .zip(shuffler_alphas.iter())
+        .map(|(ri, &alpha_i)| ri.tag() * alpha_i)
+        .fold(FE::zero(), |acc, term| acc + term);
+    let g_shuffler_tag_linear = Group::base_point().scalar_mul(&shuffler_tag_linear);
+
+    // Exchange direction A: act as inputer, send g^ri.
+    send_group_elements(&g_ri_inputer, channel)
+        .map_err(|e| anyhow!("step4 failed to send local g^ri values: {}", e))?;
+
+    // Exchange direction B: act as shuffler, receive peer g^ri and challenge it.
+    let g_ri_shuffler = receive_group_elements(channel)
+        .map_err(|e| anyhow!("step4 failed to receive peer g^ri values: {}", e))?;
+    ensure!(
+        g_ri_shuffler.len() == shuffler_authenticated_ri_receiver.len(),
+        "step4 length mismatch: received peer g^ri {} vs shuffler commitments {}",
+        g_ri_shuffler.len(),
+        shuffler_authenticated_ri_receiver.len()
+    );
+    channel
+        .send(&seed_for_peer_inputer)
+        .map_err(|e| anyhow!("step4 failed to send peer challenge seed: {}", e))?;
+
+    // Receive seed for our inputer-role pad proof.
+    let peer_seed_bytes = channel
+        .receive()
+        .map_err(|e| anyhow!("step4 failed to receive pad-challenge seed: {}", e))?;
+    ensure!(
+        peer_seed_bytes.len() == 32,
+        "step4 expected 32-byte pad-challenge seed, got {} bytes",
+        peer_seed_bytes.len()
+    );
+    let mut peer_seed = [0u8; 32];
+    peer_seed.copy_from_slice(&peer_seed_bytes);
+
+    // Compute shuffler-side MSM while deriving inputer-side pad response.
+    let shuffler_msm = msm_pippenger(&g_ri_shuffler, &shuffler_alphas)
+        .map_err(|e| anyhow!("step4 failed MSM computation with Pippenger: {}", e))?;
+    let shuffler_msm_delta = shuffler_msm.scalar_mul(&shuffler_delta);
+
+    let mut inputer_seeded_rng = StdRng::from_seed(peer_seed);
+    let inputer_alphas = random_fe_vec_from_rng(
+        &mut inputer_seeded_rng,
+        inputer_authenticated_ri_sender.len(),
+    )?;
+    let inputer_pad_linear = inputer_authenticated_ri_sender
+        .iter()
+        .zip(inputer_alphas.iter())
+        .map(|(ri, &alpha_i)| ri.pad() * alpha_i)
+        .fold(FE::zero(), |acc, term| acc + term);
+    let inputer_pad_group = Group::base_point().scalar_mul(&inputer_pad_linear);
+    send_group_elements(&[inputer_pad_group], channel)
+        .map_err(|e| anyhow!("step4 failed to send pad consistency group element: {}", e))?;
+
+    // Finish shuffler verification with peer's pad proof.
+    let peer_pad_group = receive_group_elements(channel).map_err(|e| {
+        anyhow!(
+            "step4 failed to receive peer pad consistency group element: {}",
+            e
+        )
+    })?;
+    ensure!(
+        peer_pad_group.len() == 1,
+        "step4 expected exactly one peer pad consistency element, got {}",
+        peer_pad_group.len()
+    );
+    let lhs = g_shuffler_tag_linear + peer_pad_group[0].clone();
+    ensure!(
+        lhs.as_point() == shuffler_msm_delta.as_point(),
+        "step4 consistency check failed: MSM/tag relation for peer r_i commitments did not hold"
+    );
+
+    Ok((g_ri_inputer, g_ri_shuffler))
 }
 
 fn checked_permute<T: Clone>(vals: &[T], permutation: &[usize]) -> Result<Vec<T>> {
@@ -356,15 +462,12 @@ impl TwoSideShuffler {
                 channel,
             )?;
 
-        let g_ri_shuffler = self
-            .shuffler
-            .step4_receive_g_ri_and_verify_pad_consistency_proof(
-                &authenticated_ri_shuffler,
-                channel,
-            )?;
-        let g_ri_inputer = self
-            .inputer
-            .step4_send_g_ri_and_pad_consistency_proof(&authenticated_ri_inputer, channel)?;
+        let (g_ri_inputer, g_ri_shuffler) = run_merged_step4(
+            &authenticated_ri_inputer,
+            &authenticated_ri_shuffler,
+            self.shuffler.delta_1(),
+            channel,
+        )?;
 
         let (x_shuffler, authenticated_x_powers_shuffler) = self
             .shuffler
