@@ -1,14 +1,16 @@
 use circuit_psi::{
-    bedoza::{BeDOZa, BeDOZaTriple, bedoza_receiver::BeDOZaReceiver, bedoza_sender::BeDOZaSender},
+    bedoza::BeDOZaTriple,
     circuit_psi::one_side_psu::{OneSidePsuReceiver, OneSidePsuSender},
-    math::{defines::FE, scalar_field::fq},
+    math::defines::FE,
     tcp_channel::{connect_with_retry, listen_to},
-    utils::sets::sample_correlated_sets,
+    utils::{
+        bedoza_csv::{read_fe_txt, read_triples_csv},
+        sets::sample_correlated_sets,
+    },
 };
 use clap::{Parser, ValueEnum};
-use rand::{Rng, RngExt, SeedableRng, rngs::StdRng};
-use sha2::{Digest, Sha256};
-use std::{collections::HashSet, time::Instant};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
+use std::{collections::HashSet, path::PathBuf, time::Instant};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum Side {
@@ -29,6 +31,10 @@ struct Args {
     set_size: usize,
     #[arg(long, default_value_t = 64)]
     intersection_size: usize,
+    #[arg(long)]
+    triples_csv: PathBuf,
+    #[arg(long)]
+    delta_txt: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -45,70 +51,16 @@ fn socket_addr(args: &Args) -> String {
     format!("{}:{}", args.addr, args.port)
 }
 
-fn derive_seed(shared_seed: [u8; 32], label: &[u8]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(shared_seed);
-    hasher.update(label);
-    let digest = hasher.finalize();
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&digest);
-    out
+fn sample_local_key(rng: &mut impl rand::Rng) -> FE {
+    let mut key_seed = [0u8; 32];
+    rng.fill(&mut key_seed);
+    FE::from_bytes_le_mod_order(&key_seed)
 }
 
-fn sample_fe<R: Rng>(rng: &mut R) -> FE {
-    let mut bytes = [0u8; 32];
-    rng.fill(&mut bytes);
-    FE::from_bytes_le_mod_order(&bytes)
-}
-
-fn make_cross_party_share<R: Rng>(
-    total_value: FE,
-    delta0: FE,
-    delta1: FE,
-    rng: &mut R,
-) -> (BeDOZa, BeDOZa) {
-    let share0_value = sample_fe(rng);
-    let share1_value = total_value - share0_value;
-    let share0_pad = sample_fe(rng);
-    let share1_pad = sample_fe(rng);
-
-    let party0 = BeDOZa::new(
-        BeDOZaSender::new(share0_value, share0_pad),
-        BeDOZaReceiver::new(delta0 * share1_value - share1_pad, delta0),
-        false,
-    );
-    let party1 = BeDOZa::new(
-        BeDOZaSender::new(share1_value, share1_pad),
-        BeDOZaReceiver::new(delta1 * share0_value - share0_pad, delta1),
-        true,
-    );
-
-    (party0, party1)
-}
-
-fn generate_fake_triples<R: Rng>(
-    n: usize,
-    delta0: FE,
-    delta1: FE,
-    rng: &mut R,
-) -> (Vec<BeDOZaTriple>, Vec<BeDOZaTriple>) {
-    let mut side0 = Vec::with_capacity(n);
-    let mut side1 = Vec::with_capacity(n);
-
-    for _ in 0..n {
-        let a = sample_fe(rng);
-        let b = sample_fe(rng);
-        let c = a * b;
-
-        let (a0, a1) = make_cross_party_share(a, delta0, delta1, rng);
-        let (b0, b1) = make_cross_party_share(b, delta0, delta1, rng);
-        let (c0, c1) = make_cross_party_share(c, delta0, delta1, rng);
-
-        side0.push((a0, b0, c0));
-        side1.push((a1, b1, c1));
-    }
-
-    (side0, side1)
+fn sample_local_protocol_rng(rng: &mut impl rand::Rng) -> StdRng {
+    let mut protocol_seed = [0u8; 32];
+    rng.fill(&mut protocol_seed);
+    StdRng::from_seed(protocol_seed)
 }
 
 fn expected_sender_difference(sender_set: &[FE], receiver_set: &[FE]) -> Vec<FE> {
@@ -130,8 +82,6 @@ fn expected_union(sender_set: &[FE], receiver_set: &[FE]) -> HashSet<[u8; 32]> {
 
 fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     let mut channel = listen_to(addr).map_err(|e| eyre::eyre!("{e}"))?;
-    let start = Instant::now();
-
     let mut seed_rng = rand::rng();
     let mut shared_seed = [0u8; 32];
     seed_rng.fill(&mut shared_seed);
@@ -144,17 +94,27 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     let expected_difference = expected_sender_difference(&sender_set, &receiver_set);
     let expected_union = expected_union(&sender_set, &receiver_set);
 
-    let mut triple_rng = StdRng::from_seed(derive_seed(shared_seed, b"fake-triples"));
-    let (sender_triples, _) =
-        generate_fake_triples(args.set_size, fq(97), fq(131), &mut triple_rng);
+    let delta = read_fe_txt(&args.delta_txt, "delta")?;
+    let k0 = sample_local_key(&mut seed_rng);
+    let sender_triples_all = read_triples_csv(&args.triples_csv)?;
+    eyre::ensure!(
+        sender_triples_all.len() >= sender_set.len(),
+        "sender set size {} exceeds prepared triple count {}",
+        sender_set.len(),
+        sender_triples_all.len()
+    );
+    let sender_triples: &[BeDOZaTriple] = &sender_triples_all[..sender_set.len()];
 
-    let mut one_side_psu = OneSidePsuSender::new(fq(97), fq(173), &mut channel)
+    let start = Instant::now();
+    let bytes_sent_before = channel.bytes_sent();
+    let bytes_received_before = channel.bytes_received();
+    let mut one_side_psu = OneSidePsuSender::new(delta, k0, &mut channel)
         .map_err(|e| eyre::eyre!("sender failed to initialize one_side_psu: {e}"))?;
-    let mut protocol_rng = StdRng::from_seed(derive_seed(shared_seed, b"sender-protocol-rng"));
+    let mut protocol_rng = sample_local_protocol_rng(&mut seed_rng);
     one_side_psu
-        .run(
+        .run_and_open(
             &sender_set,
-            &sender_triples,
+            sender_triples,
             &mut protocol_rng,
             &mut channel,
         )
@@ -164,16 +124,15 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
         side: Side::Sender,
         sender_difference_size: expected_difference.len(),
         union_size: expected_union.len(),
-        bytes_sent: channel.bytes_sent(),
-        bytes_received: channel.bytes_received(),
+        bytes_sent: channel.bytes_sent().saturating_sub(bytes_sent_before),
+        bytes_received: channel.bytes_received().saturating_sub(bytes_received_before),
         elapsed_ms: start.elapsed().as_millis(),
     })
 }
 
 fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     let mut channel = connect_with_retry(addr).map_err(|e| eyre::eyre!("{e}"))?;
-    let start = Instant::now();
-
+    let mut local_rng = rand::rng();
     let shared_seed_bytes = channel
         .receive()
         .map_err(|e| eyre::eyre!("receiver failed to receive shared seed: {e}"))?;
@@ -190,27 +149,31 @@ fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     let expected_difference = expected_sender_difference(&sender_set, &receiver_set);
     let expected_union = expected_union(&sender_set, &receiver_set);
 
-    let mut triple_rng = StdRng::from_seed(derive_seed(shared_seed, b"fake-triples"));
-    let (_, receiver_triples) =
-        generate_fake_triples(args.set_size, fq(97), fq(131), &mut triple_rng);
+    let delta = read_fe_txt(&args.delta_txt, "delta")?;
+    let k1 = sample_local_key(&mut local_rng);
+    let receiver_triples_all = read_triples_csv(&args.triples_csv)?;
+    eyre::ensure!(
+        receiver_triples_all.len() >= sender_set.len(),
+        "receiver set size {} exceeds prepared triple count {}",
+        sender_set.len(),
+        receiver_triples_all.len()
+    );
+    let receiver_triples: &[BeDOZaTriple] = &receiver_triples_all[..sender_set.len()];
 
-    let mut one_side_psu = OneSidePsuReceiver::new(fq(131), fq(149), &mut channel)
+    let start = Instant::now();
+    let bytes_sent_before = channel.bytes_sent();
+    let bytes_received_before = channel.bytes_received();
+    let mut one_side_psu = OneSidePsuReceiver::new(delta, k1, &mut channel)
         .map_err(|e| eyre::eyre!("receiver failed to initialize one_side_psu: {e}"))?;
-    let mut protocol_rng = StdRng::from_seed(derive_seed(shared_seed, b"receiver-protocol-rng"));
-    let opened_products = one_side_psu
-        .run(
+    let mut protocol_rng = sample_local_protocol_rng(&mut local_rng);
+    let sender_difference = one_side_psu
+        .run_and_open(
             &receiver_set,
-            &receiver_triples,
+            receiver_triples,
             &mut protocol_rng,
             &mut channel,
         )
         .map_err(|e| eyre::eyre!("receiver failed to run one_side_psu: {e}"))?;
-    // Zero products correspond to sender elements in the intersection, so filter them out.
-    let sender_difference: Vec<FE> = opened_products
-        .iter()
-        .copied()
-        .filter(|value| *value != FE::zero())
-        .collect();
     eyre::ensure!(
         sender_difference == expected_difference,
         "receiver observed sender difference mismatch: got {} values, expected {}",
@@ -234,8 +197,8 @@ fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
         side: Side::Receiver,
         sender_difference_size: sender_difference.len(),
         union_size: union.len(),
-        bytes_sent: channel.bytes_sent(),
-        bytes_received: channel.bytes_received(),
+        bytes_sent: channel.bytes_sent().saturating_sub(bytes_sent_before),
+        bytes_received: channel.bytes_received().saturating_sub(bytes_received_before),
         elapsed_ms: start.elapsed().as_millis(),
     })
 }
