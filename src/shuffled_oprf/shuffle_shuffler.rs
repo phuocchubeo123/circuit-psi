@@ -26,6 +26,7 @@ use rand::{Rng, RngExt, SeedableRng, rngs::StdRng};
 pub struct ShufflerOutput {
     pub shuffled_oprf: Vec<Group>,
     pub unshuffled_oprf: Vec<Group>,
+    pub authenticated_inputs: Vec<BeDOZaReceiver>,
     pub authenticated_permutation: Vec<BeDOZaSender>,
 }
 
@@ -699,7 +700,9 @@ impl Shuffler {
         Ok(ShufflerOutput {
             shuffled_oprf,
             unshuffled_oprf,
+            authenticated_inputs,
             authenticated_permutation: authenticated_pi_sender,
         })
     }
+
 }

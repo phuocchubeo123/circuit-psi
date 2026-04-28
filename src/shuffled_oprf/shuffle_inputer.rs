@@ -25,6 +25,7 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 
 pub struct InputerOutput {
     pub shuffled_oprf: Vec<Group>,
+    pub authenticated_inputs: Vec<BeDOZaSender>,
     pub authenticated_permutation: Vec<BeDOZaReceiver>,
 }
 
@@ -611,7 +612,9 @@ impl Inputer {
 
         Ok(InputerOutput {
             shuffled_oprf,
+            authenticated_inputs: authenticated_xi,
             authenticated_permutation: authenticated_pi,
         })
     }
+
 }

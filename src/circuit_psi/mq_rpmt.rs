@@ -331,6 +331,7 @@ pub struct MqRpmtSender {
 }
 
 pub struct MqRpmtSenderOutput {
+    pub authenticated_sender_inputs: Vec<BeDOZaSender>,
     pub authenticated_original_bitmap: Vec<BeDOZaReceiver>,
     pub shuffled_bitmap: Vec<FE>,
 }
@@ -411,10 +412,12 @@ impl MqRpmtSender {
         )?;
 
         Ok(MqRpmtSenderOutput {
+            authenticated_sender_inputs: sender_oprf.authenticated_inputs,
             authenticated_original_bitmap: relabel_receiver_shares(&proof_original_bitmap, true),
             shuffled_bitmap,
         })
     }
+
 }
 
 pub struct MqRpmtReceiver {
@@ -427,6 +430,7 @@ pub struct MqRpmtReceiver {
 }
 
 pub struct MqRpmtReceiverOutput {
+    pub authenticated_sender_inputs: Vec<BeDOZaReceiver>,
     pub original_bitmap: Vec<FE>,
     pub authenticated_original_bitmap: Vec<BeDOZaSender>,
     pub shuffled_bitmap: Vec<FE>,
@@ -508,11 +512,13 @@ impl MqRpmtReceiver {
         )?;
 
         Ok(MqRpmtReceiverOutput {
+            authenticated_sender_inputs: sender_oprf.authenticated_inputs,
             original_bitmap,
             authenticated_original_bitmap: relabel_sender_shares(&proof_original_bitmap, true),
             shuffled_bitmap,
         })
     }
+
 }
 
 fn exchange_set_size(local_len: usize, channel: &mut SwankyChannel) -> Result<usize> {
