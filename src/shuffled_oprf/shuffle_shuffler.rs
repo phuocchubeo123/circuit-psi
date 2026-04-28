@@ -116,19 +116,24 @@ impl Shuffler {
         };
 
         // 0.1) Receive the inputer's authenticated VOLE key k0 under delta_1.
-        let inputer_k0_receiver = vole_receiver
-            .commit_auth(channel, 1)
-            .map_err(|e| anyhow!("failed to receive authenticated k0: {e}"))?[0];
+        let mut inputer_k0_receiver_buf = Vec::with_capacity(1);
+        vole_receiver
+            .commit_auth_into(channel, 1, &mut inputer_k0_receiver_buf)
+            .map_err(|e| anyhow!("failed to receive authenticated k0: {e}"))?;
+        let inputer_k0_receiver = inputer_k0_receiver_buf[0];
 
-        let shuffler_k1_sender = vole_sender
-            .commit_auth(channel, &[self.k1])
-            .map_err(|e| anyhow!("failed to authenticate k1: {e}"))?[0];
+        let mut shuffler_k1_sender_buf = Vec::with_capacity(1);
+        vole_sender
+            .commit_auth_into(channel, &[self.k1], &mut shuffler_k1_sender_buf)
+            .map_err(|e| anyhow!("failed to authenticate k1: {e}"))?;
+        let shuffler_k1_sender = shuffler_k1_sender_buf[0];
         let shuffler_key_share = BeDOZa::new(shuffler_k1_sender, inputer_k0_receiver, true);
         log_step("received authenticated k0 and authenticated k1");
 
         // 0.2) Receive authenticated x_i and r_i from inputer under delta_1.
-        let authenticated_xis: Vec<BeDOZaReceiver> = vole_receiver
-            .commit_auth(channel, n)
+        let mut authenticated_xis: Vec<BeDOZaReceiver> = Vec::with_capacity(n);
+        vole_receiver
+            .commit_auth_into(channel, n, &mut authenticated_xis)
             .map_err(|e| anyhow!("failed to materialize receiver VOLE outputs: {e}"))?;
         log_step("received authenticated input x_i values");
 
@@ -142,8 +147,9 @@ impl Shuffler {
             .iter()
             .map(|&idx| FE::from(idx as u64))
             .collect();
-        let authenticated_pi_sender: Vec<BeDOZaSender> = vole_sender
-            .commit_auth(channel, &permutation_fe)
+        let mut authenticated_pi_sender: Vec<BeDOZaSender> = Vec::with_capacity(n);
+        vole_sender
+            .commit_auth_into(channel, &permutation_fe, &mut authenticated_pi_sender)
             .map_err(|e| anyhow!("failed to materialize sender VOLE inputs: {e}"))?;
         log_step("authenticated and sent permutation pi values");
 
@@ -190,8 +196,14 @@ impl Shuffler {
             .collect();
         log_step("computed authenticated (x_i + k0) commitments");
 
-        let product_commitments: Vec<BeDOZaReceiver> = vole_receiver
-            .commit_auth(channel, authenticated_inputs.len())
+        let mut product_commitments: Vec<BeDOZaReceiver> =
+            Vec::with_capacity(authenticated_inputs.len());
+        vole_receiver
+            .commit_auth_into(
+                channel,
+                authenticated_inputs.len(),
+                &mut product_commitments,
+            )
             .map_err(|e| anyhow!("failed to materialize receiver VOLE outputs: {e}"))?;
         log_step("received authenticated r_i * (x_i + k0) commitments");
 

@@ -71,17 +71,23 @@ impl Inputer {
 
         // Inputer authenticates its caller-supplied VOLE key k0 and receives the shuffler's
         // authenticated VOLE key k1 from the peer.
-        let inputer_k0_sender = vole_sender
-            .commit_auth(channel, &[self.k0])
-            .map_err(|e| anyhow!("Failed to authenticate k0: {e}"))?[0];
-        let shuffler_k1_receiver = vole_receiver
-            .commit_auth(channel, 1)
-            .map_err(|e| anyhow!("Failed to receive authenticated k1: {e}"))?[0];
+        let mut inputer_k0_sender_buf = Vec::with_capacity(1);
+        vole_sender
+            .commit_auth_into(channel, &[self.k0], &mut inputer_k0_sender_buf)
+            .map_err(|e| anyhow!("Failed to authenticate k0: {e}"))?;
+        let inputer_k0_sender = inputer_k0_sender_buf[0];
+
+        let mut shuffler_k1_receiver_buf = Vec::with_capacity(1);
+        vole_receiver
+            .commit_auth_into(channel, 1, &mut shuffler_k1_receiver_buf)
+            .map_err(|e| anyhow!("Failed to receive authenticated k1: {e}"))?;
+        let shuffler_k1_receiver = shuffler_k1_receiver_buf[0];
         log_step("authenticated k0 and received authenticated k1");
 
         // Inputer commits its local input values with VOLE under the shuffler's key delta_1.
-        let authenticated_xis = vole_sender
-            .commit_auth(channel, vals)
+        let mut authenticated_xis = Vec::with_capacity(vals.len());
+        vole_sender
+            .commit_auth_into(channel, vals, &mut authenticated_xis)
             .map_err(|e| anyhow!("Failed to authenticate input values: {e}"))?;
         log_step("authenticated input x_i values");
 
@@ -92,8 +98,9 @@ impl Inputer {
         log_step("sampled authenticated random r_i values");
 
         // Inputs receives authenticated permutation pi
-        let authenticated_pi = vole_receiver
-            .commit_auth(channel, vals.len())
+        let mut authenticated_pi = Vec::with_capacity(vals.len());
+        vole_receiver
+            .commit_auth_into(channel, vals.len(), &mut authenticated_pi)
             .map_err(|e| anyhow!("Failed to authenticate the permutation: {e}"))?;
         log_step("received authenticated permutation pi");
 
@@ -144,8 +151,13 @@ impl Inputer {
             .collect();
         log_step("computed clear r_i * (x_i + k0) values");
 
-        let authenticated_r_times_x_plus_k0 = vole_sender
-            .commit_auth(channel, &r_times_x_plus_k0_values)
+        let mut authenticated_r_times_x_plus_k0 = Vec::with_capacity(r_times_x_plus_k0_values.len());
+        vole_sender
+            .commit_auth_into(
+                channel,
+                &r_times_x_plus_k0_values,
+                &mut authenticated_r_times_x_plus_k0,
+            )
             .map_err(|e| anyhow!("Failed to authenticate ri*(xi + k0): {e}"))?;
         log_step("authenticated r_i * (x_i + k0) commitments");
 
