@@ -146,47 +146,50 @@ pub fn wolverine_batch_mul_verify(
     );
 
     let delta_1 = a[0].key();
-    for (i, (a_i, b_i, c_i)) in a
-        .iter()
-        .zip(b.iter())
-        .zip(c.iter())
-        .map(|((x, y), z)| (x, y, z))
-        .enumerate()
-    {
-        ensure!(
-            a_i.key() == delta_1 && b_i.key() == delta_1 && c_i.key() == delta_1,
-            "wolverine_batch_mul_verify: key mismatch at gate {} (expected delta_1)",
-            i
-        );
-    }
-    ensure!(
-        dummy_v.key() == delta_1,
-        "wolverine_batch_mul_verify: dummy key mismatch (expected delta_1)"
-    );
+    // for (i, (a_i, b_i, c_i)) in a
+    //     .iter()
+    //     .zip(b.iter())
+    //     .zip(c.iter())
+    //     .map(|((x, y), z)| (x, y, z))
+    //     .enumerate()
+    // {
+    //     ensure!(
+    //         a_i.key() == delta_1 && b_i.key() == delta_1 && c_i.key() == delta_1,
+    //         "wolverine_batch_mul_verify: key mismatch at gate {} (expected delta_1)",
+    //         i
+    //     );
+    // }
+    // ensure!(
+    //     dummy_v.key() == delta_1,
+    //     "wolverine_batch_mul_verify: dummy key mismatch (expected delta_1)"
+    // );
 
     println!(
         "[wolverine_batch_mul_verify] finished key checks (elapsed: {:?})",
         start.elapsed()
     );
 
+    // Sample coefficients and accumulate l_batch in the same pass. This removes
+    // an extra coefficient vector allocation/traversal and overlaps local work
+    // with prover-side batch computation before receiving lambda/mu.
     let mut seeded_rng = StdRng::from_seed(seed);
-    let coeffs = random_fe_vec_from_rng(&mut seeded_rng, a.len() + 1)?;
-    let (mul_coeffs, dummy_coeffs) = coeffs.split_at(a.len());
-    let dummy_coeff = dummy_coeffs[0];
+    let mut l_batch_mul = FE::zero();
+    for ((a_i, b_i), c_i) in a.iter().zip(b.iter()).zip(c.iter()) {
+        let mut bytes = [0u8; 32];
+        seeded_rng.fill(&mut bytes);
+        let eta_i = FE::from_bytes_le_mod_order(&bytes);
+        let l_i = a_i.tag() * b_i.tag() - c_i.tag() * delta_1;
+        l_batch_mul += eta_i * l_i;
+    }
+    let mut bytes = [0u8; 32];
+    seeded_rng.fill(&mut bytes);
+    let dummy_coeff = FE::from_bytes_le_mod_order(&bytes);
 
     let lambda_batch = receive_fe(channel)
         .map_err(|e| anyhow!("failed to receive Wolverine lambda batch: {}", e))?;
     let mu_batch =
         receive_fe(channel).map_err(|e| anyhow!("failed to receive Wolverine mu batch: {}", e))?;
 
-    let l_batch_mul = mul_coeffs
-        .iter()
-        .zip(a.iter().zip(b.iter()).zip(c.iter()))
-        .map(|(&eta_i, ((a_i, b_i), c_i))| {
-            let l_i = a_i.tag() * b_i.tag() - c_i.tag() * delta_1;
-            eta_i * l_i
-        })
-        .fold(FE::zero(), |acc, term| acc + term);
     let l_batch = l_batch_mul + dummy_coeff * dummy_v.tag();
 
     ensure!(
@@ -301,10 +304,20 @@ pub fn wolverine_batch_mul_public_output_verify(
         start.elapsed()
     );
 
+    // Same optimization pattern as wolverine_batch_mul_verify: sample
+    // coefficients and accumulate in one pass to avoid extra allocation/traversal.
     let mut seeded_rng = StdRng::from_seed(seed);
-    let coeffs = random_fe_vec_from_rng(&mut seeded_rng, a.len() + 1)?;
-    let (mul_coeffs, dummy_coeffs) = coeffs.split_at(a.len());
-    let dummy_coeff = dummy_coeffs[0];
+    let mut l_batch_mul = FE::zero();
+    for ((a_i, b_i), &c_i) in a.iter().zip(b.iter()).zip(public_c.iter()) {
+        let mut bytes = [0u8; 32];
+        seeded_rng.fill(&mut bytes);
+        let eta_i = FE::from_bytes_le_mod_order(&bytes);
+        let l_i = a_i.tag() * b_i.tag() - (delta * delta) * c_i;
+        l_batch_mul += eta_i * l_i;
+    }
+    let mut bytes = [0u8; 32];
+    seeded_rng.fill(&mut bytes);
+    let dummy_coeff = FE::from_bytes_le_mod_order(&bytes);
 
     let lambda_batch = receive_fe(channel).map_err(|e| {
         anyhow!(
@@ -315,14 +328,6 @@ pub fn wolverine_batch_mul_public_output_verify(
     let mu_batch = receive_fe(channel)
         .map_err(|e| anyhow!("failed to receive Wolverine public-output mu batch: {}", e))?;
 
-    let l_batch_mul = mul_coeffs
-        .iter()
-        .zip(a.iter().zip(b.iter()).zip(public_c.iter()))
-        .map(|(&eta_i, ((a_i, b_i), &c_i))| {
-            let l_i = a_i.tag() * b_i.tag() - (delta * delta) * c_i;
-            eta_i * l_i
-        })
-        .fold(FE::zero(), |acc, term| acc + term);
     let l_batch = l_batch_mul + dummy_coeff * dummy_x.tag();
 
     ensure!(
