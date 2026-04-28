@@ -77,17 +77,6 @@ pub fn prove_bitmap_shuffle(
         "mq_rpmt shuffle proof requires at least 2 sender inputs"
     );
 
-    let start = std::time::Instant::now();
-    let mut step = 0usize;
-    let mut log_step = |description: &str| {
-        step += 1;
-        println!(
-            "[mq_rpmt::prove_bitmap_shuffle] Step {step}: {description} (elapsed: {:?})",
-            start.elapsed()
-        );
-    };
-    log_step("validated input lengths and minimum size");
-
     let challenges = receive_fe_vec(channel)
         .map_err(|e| anyhow!("failed to receive mq_rpmt shuffle challenges: {e}"))?;
     ensure!(
@@ -98,14 +87,12 @@ pub fn prove_bitmap_shuffle(
     let alpha = challenges[0];
     let beta = challenges[1];
     let gamma = challenges[2];
-    log_step("received verifier challenges alpha, beta, gamma");
 
     let authenticated_permuted_terms: Vec<BeDOZaSender> = authenticated_permutation
         .iter()
         .zip(shuffled_bitmap.iter())
         .map(|(pi_i, &bit_i)| (*pi_i * beta) + (alpha + gamma * bit_i))
         .collect();
-    log_step("computed authenticated permuted terms");
 
     let mut permuted_running = authenticated_permuted_terms[0].val();
     let permuted_running_products: Vec<FE> = authenticated_permuted_terms
@@ -116,20 +103,17 @@ pub fn prove_bitmap_shuffle(
             permuted_running
         })
         .collect();
-    log_step("built permuted running products");
     let authenticated_permuted_running_products = auth_vole_sender
         .commit_auth(channel, &permuted_running_products)
         .map_err(|e| {
             anyhow!("permuted bitmap chain: failed to authenticate running products: {e}")
         })?;
-    log_step("authenticated permuted running products");
     let mut permuted_left_chain = Vec::with_capacity(authenticated_permuted_running_products.len());
     permuted_left_chain.push(authenticated_permuted_terms[0]);
     permuted_left_chain.extend_from_slice(
         &authenticated_permuted_running_products
             [..authenticated_permuted_running_products.len() - 1],
     );
-    log_step("assembled permuted left-chain witnesses");
     wolverine_batch_mul_prove(
         &permuted_left_chain,
         &authenticated_permuted_terms[1..],
@@ -138,14 +122,12 @@ pub fn prove_bitmap_shuffle(
         channel,
     )
     .map_err(|e| anyhow!("permuted bitmap chain: Wolverine chain proof failed: {e}"))?;
-    log_step("proved permuted chain multiplication constraints");
 
     let authenticated_original_terms: Vec<BeDOZaSender> = authenticated_original_bitmap
         .iter()
         .enumerate()
         .map(|(i, bit_i)| (*bit_i * gamma) + (alpha + beta * FE::from(i as u64)))
         .collect();
-    log_step("computed authenticated original terms");
 
     let mut original_running = authenticated_original_terms[0].val();
     let original_running_products: Vec<FE> = authenticated_original_terms
@@ -156,14 +138,12 @@ pub fn prove_bitmap_shuffle(
             original_running
         })
         .collect();
-    log_step("built original running products");
 
     let authenticated_original_running_products = auth_vole_sender
         .commit_auth(channel, &original_running_products)
         .map_err(|e| {
             anyhow!("original bitmap chain: failed to authenticate running products: {e}")
         })?;
-    log_step("authenticated original running products");
 
     let mut original_left_chain = Vec::with_capacity(authenticated_original_running_products.len());
     original_left_chain.push(authenticated_original_terms[0]);
@@ -171,7 +151,6 @@ pub fn prove_bitmap_shuffle(
         &authenticated_original_running_products
             [..authenticated_original_running_products.len() - 1],
     );
-    log_step("assembled original left-chain witnesses");
 
     wolverine_batch_mul_prove(
         &original_left_chain,
@@ -181,7 +160,6 @@ pub fn prove_bitmap_shuffle(
         channel,
     )
     .map_err(|e| anyhow!("original bitmap chain: Wolverine chain proof failed: {e}"))?;
-    log_step("proved original chain multiplication constraints");
 
     send_open_shares(
         &[
@@ -193,7 +171,6 @@ pub fn prove_bitmap_shuffle(
         channel,
     )
     .map_err(|e| anyhow!("failed to open mq_rpmt final chain products: {e}"))?;
-    log_step("opened final permuted/original chain products");
 
     Ok(())
 }

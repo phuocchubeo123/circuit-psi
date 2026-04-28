@@ -545,10 +545,22 @@ impl Inputer {
         channel: &mut SwankyChannel,
     ) -> Result<InputerOutput> {
         ensure!(!x_values.is_empty(), "run_full_shuffled_oprf: empty input");
+        let total_start = std::time::Instant::now();
+        let mut step_idx = 0usize;
+        let mut log_step_done = |label: &str, step_start: std::time::Instant| {
+            step_idx += 1;
+            println!(
+                "[shuffle_inputer::run] Step {step_idx} {label} done in {:?} (total: {:?})",
+                step_start.elapsed(),
+                total_start.elapsed()
+            );
+        };
+
         let mut key_shares = None;
         let mut authenticated_xi = Vec::with_capacity(x_values.len());
         let mut authenticated_ri = Vec::with_capacity(x_values.len());
         let mut authenticated_pi = Vec::with_capacity(x_values.len());
+        let step_start = std::time::Instant::now();
         self.step0_authenticate_oprf_key_and_xi_and_ri_and_receive_pi(
             x_values,
             auth_vole_sender,
@@ -559,9 +571,14 @@ impl Inputer {
             &mut authenticated_ri,
             &mut authenticated_pi,
         )?;
+        log_step_done(
+            "step0 authenticate key/inputs/random/permutation",
+            step_start,
+        );
         let key_shares = key_shares.ok_or_else(|| anyhow!("step0 did not produce key shares"))?;
 
         let mut authenticated_r_x_plus_k0 = Vec::with_capacity(x_values.len());
+        let step_start = std::time::Instant::now();
         self.step1_inputer_authenticates_r_times_x_plus_k0_and_proves(
             &authenticated_xi,
             &authenticated_ri,
@@ -570,7 +587,9 @@ impl Inputer {
             channel,
             &mut authenticated_r_x_plus_k0,
         )?;
+        log_step_done("step1 prove r*(x+k0)", step_start);
 
+        let step_start = std::time::Instant::now();
         let (_u_values, authenticated_u, authenticated_v) = self
             .step2_vole_share_r_times_k1_and_authenticate(
                 &authenticated_ri,
@@ -580,7 +599,9 @@ impl Inputer {
                 k1_mul_vole_sender,
                 channel,
             )?;
+        log_step_done("step2 share r*k1 and authenticate", step_start);
 
+        let step_start = std::time::Instant::now();
         let authenticated_r_x_k_inverse = self
             .step3_open_ri_x_plus_k0_plus_ui_and_receive_reauthenticate(
                 &authenticated_r_x_plus_k0,
@@ -589,9 +610,13 @@ impl Inputer {
                 auth_vole_receiver,
                 channel,
             )?;
+        log_step_done("step3 open/re-auth/inverse", step_start);
 
+        let step_start = std::time::Instant::now();
         let g_ri = self.step4_send_g_ri_and_pad_consistency_proof(&authenticated_ri, channel)?;
+        log_step_done("step4 send g^ri and pad proof", step_start);
 
+        let step_start = std::time::Instant::now();
         let (_x, authenticated_permuted_x_powers, authenticated_xi_times_inverse) = self
             .step5_send_challenge_and_receive_authenticated_xpi_and_xi_times_inverse(
                 &authenticated_pi,
@@ -600,13 +625,16 @@ impl Inputer {
                 auth_vole_receiver,
                 channel,
             )?;
+        log_step_done("step5 challenge/shuffle identity", step_start);
 
+        let step_start = std::time::Instant::now();
         let shuffled_oprf = self.step6_receive_shuffled_oprf_points_and_verify(
             &g_ri,
             &authenticated_permuted_x_powers,
             &authenticated_xi_times_inverse,
             channel,
         )?;
+        log_step_done("step6 verify shuffled OPRF points", step_start);
 
         Ok(InputerOutput {
             shuffled_oprf,

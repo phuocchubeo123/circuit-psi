@@ -379,11 +379,22 @@ impl TwoSideInputer {
             !shuffler_permutation.is_empty(),
             "run_full_two_side_shuffled_oprf: shuffler permutation cannot be empty"
         );
+        let total_start = std::time::Instant::now();
+        let mut step_idx = 0usize;
+        let mut log_step_done = |label: &str, step_start: std::time::Instant| {
+            step_idx += 1;
+            println!(
+                "[two_side_shuffle_inputer::run] Step {step_idx} {label} done in {:?} (total: {:?})",
+                step_start.elapsed(),
+                total_start.elapsed()
+            );
+        };
 
         let mut inputer_key_shares: Option<BeDOZa> = None;
         let mut authenticated_xi = Vec::with_capacity(inputer_x_values.len());
         let mut authenticated_ri_inputer = Vec::with_capacity(inputer_x_values.len());
         let mut authenticated_pi_inputer = Vec::with_capacity(inputer_x_values.len());
+        let step_start = std::time::Instant::now();
         self.inputer
             .step0_authenticate_oprf_key_and_xi_and_ri_and_receive_pi(
                 inputer_x_values,
@@ -415,8 +426,13 @@ impl TwoSideInputer {
             )?;
         let shuffler_key_share = shuffler_key_share
             .ok_or_else(|| anyhow!("shuffler step0 did not produce key shares"))?;
+        log_step_done(
+            "step0 authenticate key/inputs/random/permutation in both roles",
+            step_start,
+        );
 
         let mut authenticated_r_x_plus_k0_inputer = Vec::with_capacity(inputer_x_values.len());
+        let step_start = std::time::Instant::now();
         self.inputer
             .step1_inputer_authenticates_r_times_x_plus_k0_and_proves(
                 &authenticated_xi,
@@ -437,7 +453,9 @@ impl TwoSideInputer {
                 channel,
                 &mut authenticated_r_x_plus_k0_shuffler,
             )?;
+        log_step_done("step1 prove/verify r*(x+k0) in both roles", step_start);
 
+        let step_start = std::time::Instant::now();
         let (_u_values_inputer, authenticated_u_inputer, authenticated_v_inputer) =
             self.inputer.step2_vole_share_r_times_k1_and_authenticate(
                 &authenticated_ri_inputer,
@@ -456,7 +474,9 @@ impl TwoSideInputer {
                 k1_mul_vole_receiver,
                 channel,
             )?;
+        log_step_done("step2 VOLE share r*k1 and cross-authenticate", step_start);
 
+        let step_start = std::time::Instant::now();
         let authenticated_r_x_k_inverse_inputer = self
             .inputer
             .step3_open_ri_x_plus_k0_plus_ui_and_receive_reauthenticate(
@@ -476,14 +496,24 @@ impl TwoSideInputer {
                     auth_vole_sender,
                     channel,
                 )?;
+        log_step_done(
+            "step3 open/re-authenticate/inverse in both roles",
+            step_start,
+        );
 
+        let step_start = std::time::Instant::now();
         let (g_ri_inputer, g_ri_shuffler) = run_merged_step4(
             &authenticated_ri_inputer,
             &authenticated_ri_shuffler,
             self.shuffler.delta_1(),
             channel,
         )?;
+        log_step_done(
+            "step4 merged g^ri exchange and pad consistency proof",
+            step_start,
+        );
 
+        let step_start = std::time::Instant::now();
         let (_x_inputer, authenticated_permuted_x_powers_inputer, authenticated_xi_times_inverse) =
             self.inputer
                 .step5_send_challenge_and_receive_authenticated_xpi_and_xi_times_inverse(
@@ -501,7 +531,12 @@ impl TwoSideInputer {
                 auth_vole_sender,
                 channel,
             )?;
+        log_step_done(
+            "step5 challenge handling and shuffle-identity proof",
+            step_start,
+        );
 
+        let step_start = std::time::Instant::now();
         let shuffler_step6 = precompute_shuffler_step6(
             shuffler_permutation,
             &g_ri_shuffler,
@@ -537,6 +572,10 @@ impl TwoSideInputer {
             channel,
         )
         .map_err(|e| anyhow!("step6 failed to send right product proof elements: {}", e))?;
+        log_step_done(
+            "step6 precompute/send/verify shuffled OPRF points",
+            step_start,
+        );
 
         Ok(TwoSideInputerOutput {
             inputer_output: InputerOutput {

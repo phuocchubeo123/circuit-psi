@@ -383,11 +383,22 @@ impl TwoSideShuffler {
             !inputer_x_values.is_empty(),
             "run_full_two_side_shuffled_oprf: inputer input set cannot be empty"
         );
+        let total_start = std::time::Instant::now();
+        let mut step_idx = 0usize;
+        let mut log_step_done = |label: &str, step_start: std::time::Instant| {
+            step_idx += 1;
+            println!(
+                "[two_side_shuffle_shuffler::run] Step {step_idx} {label} done in {:?} (total: {:?})",
+                step_start.elapsed(),
+                total_start.elapsed()
+            );
+        };
 
         let mut shuffler_key_share: Option<BeDOZa> = None;
         let mut authenticated_inputs_shuffler = Vec::with_capacity(shuffler_permutation.len());
         let mut authenticated_ri_shuffler = Vec::with_capacity(shuffler_permutation.len());
         let mut authenticated_pi_shuffler = Vec::with_capacity(shuffler_permutation.len());
+        let step_start = std::time::Instant::now();
         self.shuffler
             .step0_authenticate_oprf_key_and_xi_and_ri_and_send_pi(
                 shuffler_permutation,
@@ -419,8 +430,13 @@ impl TwoSideShuffler {
             )?;
         let inputer_key_shares = inputer_key_shares
             .ok_or_else(|| anyhow!("inputer step0 did not produce key shares"))?;
+        log_step_done(
+            "step0 authenticate key/inputs/random/permutation in both roles",
+            step_start,
+        );
 
         let mut authenticated_r_x_plus_k0_shuffler = Vec::with_capacity(shuffler_permutation.len());
+        let step_start = std::time::Instant::now();
         self.shuffler
             .step1_inputer_authenticates_r_times_x_plus_k0_and_verifies(
                 &authenticated_inputs_shuffler,
@@ -441,7 +457,9 @@ impl TwoSideShuffler {
                 channel,
                 &mut authenticated_r_x_plus_k0_inputer,
             )?;
+        log_step_done("step1 prove/verify r*(x+k0) in both roles", step_start);
 
+        let step_start = std::time::Instant::now();
         let (v_values_shuffler, authenticated_u_shuffler, authenticated_v_shuffler) =
             self.shuffler.step2_vole_share_r_times_k1_and_authenticate(
                 &authenticated_ri_shuffler,
@@ -460,7 +478,9 @@ impl TwoSideShuffler {
                 k1_mul_vole_sender,
                 channel,
             )?;
+        log_step_done("step2 VOLE share r*k1 and cross-authenticate", step_start);
 
+        let step_start = std::time::Instant::now();
         let (_r_x_k_values_shuffler, _inverse_values_shuffler, authenticated_inverse_shuffler) =
             self.shuffler
                 .step3_receive_ri_x_plus_k0_plus_ui_and_receive_reauthenticate_and_inverse(
@@ -480,14 +500,24 @@ impl TwoSideShuffler {
                 auth_vole_receiver,
                 channel,
             )?;
+        log_step_done(
+            "step3 open/re-authenticate/inverse in both roles",
+            step_start,
+        );
 
+        let step_start = std::time::Instant::now();
         let (g_ri_inputer, g_ri_shuffler) = run_merged_step4(
             &authenticated_ri_inputer,
             &authenticated_ri_shuffler,
             self.shuffler.delta_1(),
             channel,
         )?;
+        log_step_done(
+            "step4 merged g^ri exchange and pad consistency proof",
+            step_start,
+        );
 
+        let step_start = std::time::Instant::now();
         let (x_shuffler, authenticated_x_powers_shuffler) = self
             .shuffler
             .step5_receive_challenge_and_authenticate_xpi_and_prove_running_product(
@@ -505,7 +535,12 @@ impl TwoSideShuffler {
                     auth_vole_receiver,
                     channel,
                 )?;
+        log_step_done(
+            "step5 challenge handling and shuffle-identity proof",
+            step_start,
+        );
 
+        let step_start = std::time::Instant::now();
         let shuffler_step6 = precompute_shuffler_step6(
             shuffler_permutation,
             &g_ri_shuffler,
@@ -541,6 +576,10 @@ impl TwoSideShuffler {
             &authenticated_xi_times_inverse,
             channel,
         )?;
+        log_step_done(
+            "step6 precompute/send/verify shuffled OPRF points",
+            step_start,
+        );
 
         Ok(TwoSideShufflerOutput {
             shuffler_output: ShufflerOutput {

@@ -627,10 +627,22 @@ impl Shuffler {
             !permutation.is_empty(),
             "run_full_shuffled_oprf: permutation cannot be empty"
         );
+        let total_start = std::time::Instant::now();
+        let mut step_idx = 0usize;
+        let mut log_step_done = |label: &str, step_start: std::time::Instant| {
+            step_idx += 1;
+            println!(
+                "[shuffle_shuffler::run] Step {step_idx} {label} done in {:?} (total: {:?})",
+                step_start.elapsed(),
+                total_start.elapsed()
+            );
+        };
+
         let mut shuffler_key_share = None;
         let mut authenticated_inputs = Vec::with_capacity(permutation.len());
         let mut authenticated_ri_receiver = Vec::with_capacity(permutation.len());
         let mut authenticated_pi_sender = Vec::with_capacity(permutation.len());
+        let step_start = std::time::Instant::now();
         self.step0_authenticate_oprf_key_and_xi_and_ri_and_send_pi(
             permutation,
             auth_vole_sender,
@@ -641,9 +653,14 @@ impl Shuffler {
             &mut authenticated_ri_receiver,
             &mut authenticated_pi_sender,
         )?;
+        log_step_done(
+            "step0 authenticate key/inputs/random/permutation",
+            step_start,
+        );
         let shuffler_key_share =
             shuffler_key_share.ok_or_else(|| anyhow!("step0 did not produce key share"))?;
         let mut authenticated_r_x_plus_k0_receiver = Vec::with_capacity(permutation.len());
+        let step_start = std::time::Instant::now();
         self.step1_inputer_authenticates_r_times_x_plus_k0_and_verifies(
             &authenticated_inputs,
             &authenticated_ri_receiver,
@@ -652,6 +669,8 @@ impl Shuffler {
             channel,
             &mut authenticated_r_x_plus_k0_receiver,
         )?;
+        log_step_done("step1 verify r*(x+k0)", step_start);
+        let step_start = std::time::Instant::now();
         let (v_values, authenticated_u_receiver, authenticated_v_sender) = self
             .step2_vole_share_r_times_k1_and_authenticate(
                 &authenticated_ri_receiver,
@@ -661,6 +680,8 @@ impl Shuffler {
                 k1_mul_vole_receiver,
                 channel,
             )?;
+        log_step_done("step2 share r*k1 and authenticate", step_start);
+        let step_start = std::time::Instant::now();
         let (_r_x_k_values, inverse_values, authenticated_inverse_sender) = self
             .step3_receive_ri_x_plus_k0_plus_ui_and_receive_reauthenticate_and_inverse(
                 &authenticated_r_x_plus_k0_receiver,
@@ -670,11 +691,15 @@ impl Shuffler {
                 auth_vole_sender,
                 channel,
             )?;
+        log_step_done("step3 open/re-auth/inverse", step_start);
 
+        let step_start = std::time::Instant::now();
         let g_ri = self.step4_receive_g_ri_and_verify_pad_consistency_proof(
             &authenticated_ri_receiver,
             channel,
         )?;
+        log_step_done("step4 receive g^ri and verify pad proof", step_start);
+        let step_start = std::time::Instant::now();
         let (x, authenticated_x_powers_sender) = self
             .step5_receive_challenge_and_authenticate_xpi_and_prove_running_product(
                 permutation,
@@ -682,6 +707,8 @@ impl Shuffler {
                 auth_vole_sender,
                 channel,
             )?;
+        log_step_done("step5 challenge/auth/prove running product", step_start);
+        let step_start = std::time::Instant::now();
         let (shuffled_oprf, unshuffled_oprf) = self
             .step6_send_shuffled_oprf_points_and_open_and_verify_products(
                 permutation,
@@ -692,6 +719,7 @@ impl Shuffler {
                 &authenticated_x_powers_sender,
                 channel,
             )?;
+        log_step_done("step6 send and verify shuffled OPRF points", step_start);
 
         Ok(ShufflerOutput {
             shuffled_oprf,
