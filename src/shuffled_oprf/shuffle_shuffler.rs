@@ -105,6 +105,15 @@ impl Shuffler {
         Vec<BeDOZaSender>,
     )> {
         let n = permutation.len();
+        let start = std::time::Instant::now();
+        let mut step = 0usize;
+        let mut log_step = |description: &str| {
+            step += 1;
+            println!(
+                "[shuffle_shuffler::step0] Step {step}: {description} (elapsed: {:?})",
+                start.elapsed()
+            );
+        };
 
         // 0.1) Receive the inputer's authenticated VOLE key k0 under delta_1.
         let inputer_k0_receiver = vole_receiver
@@ -115,15 +124,18 @@ impl Shuffler {
             .commit_auth(channel, &[self.k1])
             .map_err(|e| anyhow!("failed to authenticate k1: {e}"))?[0];
         let shuffler_key_share = BeDOZa::new(shuffler_k1_sender, inputer_k0_receiver, true);
+        log_step("received authenticated k0 and authenticated k1");
 
         // 0.2) Receive authenticated x_i and r_i from inputer under delta_1.
         let authenticated_xis: Vec<BeDOZaReceiver> = vole_receiver
             .commit_auth(channel, n)
             .map_err(|e| anyhow!("failed to materialize receiver VOLE outputs: {e}"))?;
+        log_step("received authenticated input x_i values");
 
         let authenticated_ris: Vec<BeDOZaReceiver> = vole_receiver
             .random_auth(channel, n)
             .map_err(|e| anyhow!("failed to receive authenticated r_i values: {e}"))?;
+        log_step("received authenticated random r_i values");
 
         // 0.3) Authenticate permutation values under inputer key delta_0.
         let permutation_fe: Vec<FE> = permutation
@@ -133,6 +145,7 @@ impl Shuffler {
         let authenticated_pi_sender: Vec<BeDOZaSender> = vole_sender
             .commit_auth(channel, &permutation_fe)
             .map_err(|e| anyhow!("failed to materialize sender VOLE inputs: {e}"))?;
+        log_step("authenticated and sent permutation pi values");
 
         Ok((
             shuffler_key_share,
@@ -150,22 +163,37 @@ impl Shuffler {
         vole_receiver: &mut BufferedVoleReceiver,
         channel: &mut SwankyChannel,
     ) -> Result<Vec<BeDOZaReceiver>> {
+        let start = std::time::Instant::now();
+        let mut step = 0usize;
+        let mut log_step = |description: &str| {
+            step += 1;
+            println!(
+                "[shuffle_shuffler::step1] Step {step}: {description} (elapsed: {:?})",
+                start.elapsed()
+            );
+        };
+
         ensure!(
             authenticated_inputs.len() == authenticated_ri_receiver.len(),
             "step1 length mismatch: input commitments {} vs random commitments {}",
             authenticated_inputs.len(),
             authenticated_ri_receiver.len()
         );
+        log_step("validated input and r_i commitment lengths");
 
         let k0_receiver = *shuffler_key_share.bedoza_receiver();
+        log_step("loaded authenticated k0 receiver share");
 
         let x_plus_k0_commitments: Vec<BeDOZaReceiver> = authenticated_inputs
             .iter()
             .map(|x| *x + k0_receiver)
             .collect();
+        log_step("computed authenticated (x_i + k0) commitments");
+
         let product_commitments: Vec<BeDOZaReceiver> = vole_receiver
             .commit_auth(channel, authenticated_inputs.len())
             .map_err(|e| anyhow!("failed to materialize receiver VOLE outputs: {e}"))?;
+        log_step("received authenticated r_i * (x_i + k0) commitments");
 
         wolverine_batch_mul_verify(
             authenticated_ri_receiver,
@@ -174,6 +202,7 @@ impl Shuffler {
             vole_receiver,
             channel,
         )?;
+        log_step("verified multiplication relation with Wolverine");
 
         Ok(product_commitments)
     }

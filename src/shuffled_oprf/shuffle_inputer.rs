@@ -59,6 +59,16 @@ impl Inputer {
         Vec<BeDOZaSender>,
         Vec<BeDOZaReceiver>,
     )> {
+        let start = std::time::Instant::now();
+        let mut step = 0usize;
+        let mut log_step = |description: &str| {
+            step += 1;
+            println!(
+                "[shuffle_inputer::step0] Step {step}: {description} (elapsed: {:?})",
+                start.elapsed()
+            );
+        };
+
         // Inputer authenticates its caller-supplied VOLE key k0 and receives the shuffler's
         // authenticated VOLE key k1 from the peer.
         let inputer_k0_sender = vole_sender
@@ -67,21 +77,25 @@ impl Inputer {
         let shuffler_k1_receiver = vole_receiver
             .commit_auth(channel, 1)
             .map_err(|e| anyhow!("Failed to receive authenticated k1: {e}"))?[0];
+        log_step("authenticated k0 and received authenticated k1");
 
         // Inputer commits its local input values with VOLE under the shuffler's key delta_1.
         let authenticated_xis = vole_sender
             .commit_auth(channel, vals)
             .map_err(|e| anyhow!("Failed to authenticate input values: {e}"))?;
+        log_step("authenticated input x_i values");
 
         // Inputer gets authenticated random values without additional network traffic.
         let authenticated_ris = vole_sender
             .random_auth(channel, vals.len())
             .map_err(|e| anyhow!("Failed to authenticate random values: {e}"))?;
+        log_step("sampled authenticated random r_i values");
 
         // Inputs receives authenticated permutation pi
         let authenticated_pi = vole_receiver
             .commit_auth(channel, vals.len())
             .map_err(|e| anyhow!("Failed to authenticate the permutation: {e}"))?;
+        log_step("received authenticated permutation pi");
 
         Ok((
             BeDOZa::new(inputer_k0_sender, shuffler_k1_receiver, false),
@@ -99,27 +113,41 @@ impl Inputer {
         vole_sender: &mut BufferedVoleSender,
         channel: &mut SwankyChannel,
     ) -> Result<Vec<BeDOZaSender>> {
+        let start = std::time::Instant::now();
+        let mut step = 0usize;
+        let mut log_step = |description: &str| {
+            step += 1;
+            println!(
+                "[shuffle_inputer::step1] Step {step}: {description} (elapsed: {:?})",
+                start.elapsed()
+            );
+        };
+
         ensure!(
             authenticated_xis.len() == authenticated_ris.len(),
             "step1 length mismatch: authenticated x values {} vs authenticated r values {}",
             authenticated_xis.len(),
             authenticated_ris.len()
         );
+        log_step("validated x_i and r_i commitment lengths");
 
         let authenticated_x_plus_k0: Vec<BeDOZaSender> = authenticated_xis
             .iter()
             .map(|x| x + authenticated_k0)
             .collect();
+        log_step("computed authenticated (x_i + k0) commitments");
 
         let r_times_x_plus_k0_values: Vec<FE> = authenticated_ris
             .iter()
             .zip(authenticated_x_plus_k0.iter())
             .map(|(&r_i, x_plus_k0_i)| r_i.val() * x_plus_k0_i.val())
             .collect();
+        log_step("computed clear r_i * (x_i + k0) values");
 
         let authenticated_r_times_x_plus_k0 = vole_sender
             .commit_auth(channel, &r_times_x_plus_k0_values)
             .map_err(|e| anyhow!("Failed to authenticate ri*(xi + k0): {e}"))?;
+        log_step("authenticated r_i * (x_i + k0) commitments");
 
         wolverine_batch_mul_prove(
             authenticated_ris,
@@ -128,6 +156,7 @@ impl Inputer {
             vole_sender,
             channel,
         )?;
+        log_step("proved multiplication relation with Wolverine");
 
         Ok(authenticated_r_times_x_plus_k0)
     }
