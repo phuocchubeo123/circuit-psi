@@ -370,9 +370,17 @@ impl Inputer {
         send_group_elements(&g_ri, channel)
             .map_err(|e| anyhow!("step10 failed to send g^ri values: {}", e))?;
 
-        // Jointly sample coefficients for the random linear combination.
-        let seed = random_32bytes_coin(true, channel)
-            .map_err(|e| anyhow!("step4 failed to jointly sample seed: {}", e))?;
+        // Receive shuffler-sampled challenge seed for the random linear combination.
+        let seed_bytes = channel
+            .receive()
+            .map_err(|e| anyhow!("step4 failed to receive seed: {}", e))?;
+        ensure!(
+            seed_bytes.len() == 32,
+            "step4 expected 32-byte seed, got {} bytes",
+            seed_bytes.len()
+        );
+        let mut seed = [0u8; 32];
+        seed.copy_from_slice(&seed_bytes);
         let mut seeded_rng = StdRng::from_seed(seed);
         let alphas = random_fe_vec_from_rng(&mut seeded_rng, authenticated_ri_sender.len())?;
 

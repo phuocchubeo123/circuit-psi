@@ -401,6 +401,20 @@ impl Shuffler {
             "step4 cannot run on empty ri commitments"
         );
 
+        // Shuffler samples seed/alphas locally for the random linear combination challenge.
+        let mut sampling_rng = rand::rng();
+        let seed: [u8; 32] = sampling_rng.random();
+        let mut seeded_rng = StdRng::from_seed(seed);
+        let alphas = random_fe_vec_from_rng(&mut seeded_rng, authenticated_ri_receiver.len())?;
+
+        // Precompute g^{sum_i alpha_i * tag_i} early while waiting for peer messages.
+        let tag_linear = authenticated_ri_receiver
+            .iter()
+            .zip(alphas.iter())
+            .map(|(ri, &alpha_i)| ri.tag() * alpha_i)
+            .fold(FE::zero(), |acc, term| acc + term);
+        let g_tag_linear = Group::base_point().scalar_mul(&tag_linear);
+
         let g_ri = receive_group_elements(channel)
             .map_err(|e| anyhow!("step4 failed to receive g^ri values: {}", e))?;
         ensure!(
@@ -410,24 +424,15 @@ impl Shuffler {
             authenticated_ri_receiver.len()
         );
 
-        // Jointly sample coefficients for the random linear combination.
-        let seed = random_32bytes_coin(false, channel)
-            .map_err(|e| anyhow!("step4 failed to jointly sample seed: {}", e))?;
-        let mut seeded_rng = StdRng::from_seed(seed);
-        let alphas = random_fe_vec_from_rng(&mut seeded_rng, authenticated_ri_receiver.len())?;
+        // Send challenge seed to inputer only after receiving g^ri.
+        channel
+            .send(&seed)
+            .map_err(|e| anyhow!("step4 failed to send seed: {}", e))?;
 
         // Compute MSM: g^{sum_i alpha_i * r_i}.
         let msm = msm_pippenger(&g_ri, &alphas)
             .map_err(|e| anyhow!("step4 failed MSM computation with Pippenger: {}", e))?;
         let msm_delta = msm.scalar_mul(&self.delta_1);
-
-        // Compute g^{sum_i alpha_i * tag_i}.
-        let tag_linear = authenticated_ri_receiver
-            .iter()
-            .zip(alphas.iter())
-            .map(|(ri, &alpha_i)| ri.tag() * alpha_i)
-            .fold(FE::zero(), |acc, term| acc + term);
-        let g_tag_linear = Group::base_point().scalar_mul(&tag_linear);
 
         // Receive g^{sum_i alpha_i * pad_i} from inputer after finishing local work.
         let g_pad_linear_vec = receive_group_elements(channel).map_err(|e| {
@@ -443,10 +448,10 @@ impl Shuffler {
         );
         let g_pad_linear = g_pad_linear_vec[0].clone();
 
-        // Check: g^{delta_1 * sum alpha_i r_i} - g^{sum alpha_i pad_i} = g^{sum alpha_i tag_i}.
-        let lhs = msm_delta - g_pad_linear;
+        // Check: g^{sum alpha_i tag_i} + g^{sum alpha_i pad_i} = g^{delta_1 * sum alpha_i r_i}.
+        let lhs = g_tag_linear + g_pad_linear;
         ensure!(
-            lhs.as_point() == g_tag_linear.as_point(),
+            lhs.as_point() == msm_delta.as_point(),
             "step4 consistency check failed: MSM/tag relation for r_i commitments did not hold"
         );
 
