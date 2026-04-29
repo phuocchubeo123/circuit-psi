@@ -19,7 +19,7 @@ use crate::{
 };
 use anyhow::{Result, anyhow, ensure};
 use rand::{Rng, RngExt};
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Instant};
 
 fn filter_nonzero(values: Vec<FE>) -> Vec<FE> {
     values
@@ -133,6 +133,7 @@ impl TwoSidePsuSender {
             receiver_only_triples.len() > 1,
             "two_side_psu sender requires at least 2 receiver-only triples"
         );
+        let psi_cardinality_start = Instant::now();
 
         let receiver_set_len = exchange_set_size(sender_set.len(), channel)?;
         ensure!(
@@ -173,10 +174,15 @@ impl TwoSidePsuSender {
             membership_bitmap(&receiver_oprf.shuffled_oprf, &sender_oprf_set);
 
         // Verify sender-set bitmap proof from peer.
+        let sender_mq_rpmt_start = Instant::now();
         let authenticated_sender_original_bitmap = self
             .auth_vole_receiver
             .commit_auth(channel, sender_set.len())
             .map_err(|e| anyhow!("failed to receive authenticated sender original bitmap: {e}"))?;
+        println!(
+            "two_side_psu_sender_ms_before_verify_bitmap_shuffle={}",
+            psi_cardinality_start.elapsed().as_millis()
+        );
         verify_bitmap_shuffle(
             &authenticated_sender_original_bitmap,
             &sender_oprf.authenticated_permutation,
@@ -185,6 +191,42 @@ impl TwoSidePsuSender {
             &mut self.auth_vole_receiver,
             channel,
         )?;
+        println!(
+            "two_side_psu_sender_mq_rpmt_ms={}",
+            sender_mq_rpmt_start.elapsed().as_millis()
+        );
+
+        ensure!(
+            sender_oprf.authenticated_inputs.len() == authenticated_sender_original_bitmap.len(),
+            "two_side_psu sender-only input/bitmap length mismatch: inputs={} bitmap={}",
+            sender_oprf.authenticated_inputs.len(),
+            authenticated_sender_original_bitmap.len()
+        );
+        ensure!(
+            sender_oprf.authenticated_inputs.len() == sender_only_triples.len(),
+            "two_side_psu sender-only input/triple length mismatch: inputs={} triples={}",
+            sender_oprf.authenticated_inputs.len(),
+            sender_only_triples.len()
+        );
+
+        // Complement the authenticated bitmap to obtain 1 - b for sender elements.
+        let authenticated_sender_complement_bitmap: Vec<BeDOZaReceiver> =
+            authenticated_sender_original_bitmap
+                .iter()
+                .map(|share| (*share * -FE::one()) + FE::one())
+                .collect();
+
+        let sender_first_batch_multiply_start = Instant::now();
+        let sender_only_shares = batch_multiply_cross_owned_sender(
+            &sender_oprf.authenticated_inputs,
+            &authenticated_sender_complement_bitmap,
+            sender_only_triples,
+            channel,
+        )?;
+        println!(
+            "two_side_psu_sender_first_batch_multiply_ms={}",
+            sender_first_batch_multiply_start.elapsed().as_millis()
+        );
 
         // Prove receiver-set bitmap proof to peer using the same shuffled OPRF transcript.
         let authenticated_receiver_original_bitmap = self
@@ -202,23 +244,11 @@ impl TwoSidePsuSender {
         )?;
 
         ensure!(
-            sender_oprf.authenticated_inputs.len() == authenticated_sender_original_bitmap.len(),
-            "two_side_psu sender-only input/bitmap length mismatch: inputs={} bitmap={}",
-            sender_oprf.authenticated_inputs.len(),
-            authenticated_sender_original_bitmap.len()
-        );
-        ensure!(
             receiver_oprf.authenticated_inputs.len()
                 == authenticated_receiver_original_bitmap.len(),
             "two_side_psu receiver-only input/bitmap length mismatch: inputs={} bitmap={}",
             receiver_oprf.authenticated_inputs.len(),
             authenticated_receiver_original_bitmap.len()
-        );
-        ensure!(
-            sender_oprf.authenticated_inputs.len() == sender_only_triples.len(),
-            "two_side_psu sender-only input/triple length mismatch: inputs={} triples={}",
-            sender_oprf.authenticated_inputs.len(),
-            sender_only_triples.len()
         );
         ensure!(
             receiver_oprf.authenticated_inputs.len() == receiver_only_triples.len(),
@@ -227,25 +257,12 @@ impl TwoSidePsuSender {
             receiver_only_triples.len()
         );
 
-        // Complement the authenticated bitmap to obtain 1 - b for sender elements.
-        let authenticated_sender_complement_bitmap: Vec<BeDOZaReceiver> =
-            authenticated_sender_original_bitmap
-                .iter()
-                .map(|share| (*share * -FE::one()) + FE::one())
-                .collect();
         // Complement the authenticated bitmap to obtain 1 - b for receiver elements.
         let authenticated_receiver_complement_bitmap: Vec<BeDOZaSender> =
             authenticated_receiver_original_bitmap
                 .iter()
                 .map(|share| (*share * -FE::one()) + FE::one())
                 .collect();
-
-        let sender_only_shares = batch_multiply_cross_owned_sender(
-            &sender_oprf.authenticated_inputs,
-            &authenticated_sender_complement_bitmap,
-            sender_only_triples,
-            channel,
-        )?;
         let receiver_only_shares = batch_multiply_cross_owned_receiver(
             &receiver_oprf.authenticated_inputs,
             &authenticated_receiver_complement_bitmap,
@@ -334,6 +351,7 @@ impl TwoSidePsuReceiver {
             receiver_set.len(),
             receiver_only_triples.len()
         );
+        let psi_cardinality_start = Instant::now();
 
         let sender_set_len = exchange_set_size(receiver_set.len(), channel)?;
         ensure!(
@@ -386,22 +404,6 @@ impl TwoSidePsuReceiver {
             channel,
         )?;
 
-        // Verify receiver-set bitmap proof from peer.
-        let authenticated_receiver_original_bitmap = self
-            .auth_vole_receiver
-            .commit_auth(channel, receiver_set.len())
-            .map_err(|e| {
-                anyhow!("failed to receive authenticated receiver original bitmap: {e}")
-            })?;
-        verify_bitmap_shuffle(
-            &authenticated_receiver_original_bitmap,
-            &receiver_oprf.authenticated_permutation,
-            &receiver_shuffled_bitmap,
-            rng,
-            &mut self.auth_vole_receiver,
-            channel,
-        )?;
-
         ensure!(
             sender_oprf.authenticated_inputs.len() == authenticated_sender_original_bitmap.len(),
             "two_side_psu sender-only input/bitmap length mismatch: inputs={} bitmap={}",
@@ -409,23 +411,10 @@ impl TwoSidePsuReceiver {
             authenticated_sender_original_bitmap.len()
         );
         ensure!(
-            receiver_oprf.authenticated_inputs.len()
-                == authenticated_receiver_original_bitmap.len(),
-            "two_side_psu receiver-only input/bitmap length mismatch: inputs={} bitmap={}",
-            receiver_oprf.authenticated_inputs.len(),
-            authenticated_receiver_original_bitmap.len()
-        );
-        ensure!(
             sender_oprf.authenticated_inputs.len() == sender_only_triples.len(),
             "two_side_psu sender-only input/triple length mismatch: inputs={} triples={}",
             sender_oprf.authenticated_inputs.len(),
             sender_only_triples.len()
-        );
-        ensure!(
-            receiver_oprf.authenticated_inputs.len() == receiver_only_triples.len(),
-            "two_side_psu receiver-only input/triple length mismatch: inputs={} triples={}",
-            receiver_oprf.authenticated_inputs.len(),
-            receiver_only_triples.len()
         );
 
         // Complement the authenticated bitmap to obtain 1 - b for sender elements.
@@ -434,6 +423,57 @@ impl TwoSidePsuReceiver {
                 .iter()
                 .map(|share| (*share * -FE::one()) + FE::one())
                 .collect();
+        let receiver_first_batch_multiply_start = Instant::now();
+        let sender_only_shares = batch_multiply_cross_owned_receiver(
+            &sender_oprf.authenticated_inputs,
+            &authenticated_sender_complement_bitmap,
+            sender_only_triples,
+            channel,
+        )?;
+        println!(
+            "two_side_psu_receiver_first_batch_multiply_ms={}",
+            receiver_first_batch_multiply_start.elapsed().as_millis()
+        );
+
+        // Verify receiver-set bitmap proof from peer.
+        let receiver_mq_rpmt_start = Instant::now();
+        let authenticated_receiver_original_bitmap = self
+            .auth_vole_receiver
+            .commit_auth(channel, receiver_set.len())
+            .map_err(|e| {
+                anyhow!("failed to receive authenticated receiver original bitmap: {e}")
+            })?;
+        println!(
+            "two_side_psu_receiver_ms_before_verify_bitmap_shuffle={}",
+            psi_cardinality_start.elapsed().as_millis()
+        );
+        verify_bitmap_shuffle(
+            &authenticated_receiver_original_bitmap,
+            &receiver_oprf.authenticated_permutation,
+            &receiver_shuffled_bitmap,
+            rng,
+            &mut self.auth_vole_receiver,
+            channel,
+        )?;
+        println!(
+            "two_side_psu_receiver_mq_rpmt_ms={}",
+            receiver_mq_rpmt_start.elapsed().as_millis()
+        );
+
+        ensure!(
+            receiver_oprf.authenticated_inputs.len()
+                == authenticated_receiver_original_bitmap.len(),
+            "two_side_psu receiver-only input/bitmap length mismatch: inputs={} bitmap={}",
+            receiver_oprf.authenticated_inputs.len(),
+            authenticated_receiver_original_bitmap.len()
+        );
+        ensure!(
+            receiver_oprf.authenticated_inputs.len() == receiver_only_triples.len(),
+            "two_side_psu receiver-only input/triple length mismatch: inputs={} triples={}",
+            receiver_oprf.authenticated_inputs.len(),
+            receiver_only_triples.len()
+        );
+
         // Complement the authenticated bitmap to obtain 1 - b for receiver elements.
         let authenticated_receiver_complement_bitmap: Vec<BeDOZaReceiver> =
             authenticated_receiver_original_bitmap
@@ -441,12 +481,6 @@ impl TwoSidePsuReceiver {
                 .map(|share| (*share * -FE::one()) + FE::one())
                 .collect();
 
-        let sender_only_shares = batch_multiply_cross_owned_receiver(
-            &sender_oprf.authenticated_inputs,
-            &authenticated_sender_complement_bitmap,
-            sender_only_triples,
-            channel,
-        )?;
         let receiver_only_shares = batch_multiply_cross_owned_sender(
             &receiver_oprf.authenticated_inputs,
             &authenticated_receiver_complement_bitmap,
