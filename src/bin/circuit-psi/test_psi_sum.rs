@@ -71,15 +71,31 @@ fn fe_to_hex(value: FE) -> String {
     out
 }
 
-fn expected_psi_sum(sender_set: &[FE], receiver_set: &[FE]) -> FE {
+fn derive_sender_payloads(sender_set: &[FE]) -> Vec<FE> {
+    sender_set
+        .iter()
+        .enumerate()
+        .map(|(i, value)| (*value * FE::from((i as u64) + 1)) + FE::from(7u64))
+        .collect()
+}
+
+fn expected_psi_sum(sender_set: &[FE], sender_payloads: &[FE], receiver_set: &[FE]) -> FE {
+    assert_eq!(
+        sender_set.len(),
+        sender_payloads.len(),
+        "sender payload length must match sender set length"
+    );
     let receiver_membership: HashSet<[u8; 32]> = receiver_set.iter().map(FE::to_bytes_le).collect();
-    sender_set.iter().fold(FE::zero(), |acc, value| {
-        if receiver_membership.contains(&value.to_bytes_le()) {
-            acc + *value
-        } else {
-            acc
-        }
-    })
+    sender_set
+        .iter()
+        .zip(sender_payloads.iter())
+        .fold(FE::zero(), |acc, (value, payload)| {
+            if receiver_membership.contains(&value.to_bytes_le()) {
+                acc + *payload
+            } else {
+                acc
+            }
+        })
 }
 
 fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
@@ -93,7 +109,8 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
 
     let (sender_set, receiver_set) =
         sample_correlated_sets(shared_seed, args.set_size, args.intersection_size)?;
-    let expected = expected_psi_sum(&sender_set, &receiver_set);
+    let sender_payloads = derive_sender_payloads(&sender_set);
+    let expected = expected_psi_sum(&sender_set, &sender_payloads, &receiver_set);
 
     let delta = read_fe_txt(&args.delta_txt, "delta")?;
     let k0 = sample_local_key(&mut seed_rng);
@@ -115,7 +132,13 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
         .map_err(|e| eyre::eyre!("sender failed to initialize psi_sum: {e}"))?;
     let mut protocol_rng = sample_local_protocol_rng(&mut seed_rng);
     let sum_share = psi_sum
-        .run(&sender_set, sender_triples, &mut protocol_rng, &mut channel)
+        .run(
+            &sender_set,
+            &sender_payloads,
+            sender_triples,
+            &mut protocol_rng,
+            &mut channel,
+        )
         .map_err(|e| eyre::eyre!("sender failed to run psi_sum: {e}"))?;
 
     let opened_sum = open_psi_sum_receive(&sum_share, &mut channel)
@@ -154,7 +177,8 @@ fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
 
     let (sender_set, receiver_set) =
         sample_correlated_sets(shared_seed, args.set_size, args.intersection_size)?;
-    let expected = expected_psi_sum(&sender_set, &receiver_set);
+    let sender_payloads = derive_sender_payloads(&sender_set);
+    let expected = expected_psi_sum(&sender_set, &sender_payloads, &receiver_set);
 
     let delta = read_fe_txt(&args.delta_txt, "delta")?;
     let k1 = sample_local_key(&mut local_rng);
