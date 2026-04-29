@@ -172,6 +172,10 @@ impl TwoSidePsuSender {
             membership_bitmap(&receiver_oprf.unshuffled_oprf, &sender_oprf_set);
         let receiver_shuffled_bitmap =
             membership_bitmap(&receiver_oprf.shuffled_oprf, &sender_oprf_set);
+        println!(
+            "two_side_psu_sender_ms_before_verify_bitmap_shuffle={}",
+            psi_cardinality_start.elapsed().as_millis()
+        );
 
         // Verify sender-set bitmap proof from peer.
         let sender_mq_rpmt_start = Instant::now();
@@ -179,10 +183,6 @@ impl TwoSidePsuSender {
             .auth_vole_receiver
             .commit_auth(channel, sender_set.len())
             .map_err(|e| anyhow!("failed to receive authenticated sender original bitmap: {e}"))?;
-        println!(
-            "two_side_psu_sender_ms_before_verify_bitmap_shuffle={}",
-            psi_cardinality_start.elapsed().as_millis()
-        );
         verify_bitmap_shuffle(
             &authenticated_sender_original_bitmap,
             &sender_oprf.authenticated_permutation,
@@ -390,6 +390,10 @@ impl TwoSidePsuReceiver {
             membership_bitmap(&sender_oprf.shuffled_oprf, &receiver_oprf_set);
         let receiver_shuffled_bitmap =
             membership_bitmap(&receiver_oprf.shuffled_oprf, &sender_oprf_set);
+        println!(
+            "two_side_psu_receiver_ms_before_verify_bitmap_shuffle={}",
+            psi_cardinality_start.elapsed().as_millis()
+        );
 
         // Prove sender-set bitmap proof to peer.
         let authenticated_sender_original_bitmap = self
@@ -443,10 +447,6 @@ impl TwoSidePsuReceiver {
             .map_err(|e| {
                 anyhow!("failed to receive authenticated receiver original bitmap: {e}")
             })?;
-        println!(
-            "two_side_psu_receiver_ms_before_verify_bitmap_shuffle={}",
-            psi_cardinality_start.elapsed().as_millis()
-        );
         verify_bitmap_shuffle(
             &authenticated_receiver_original_bitmap,
             &receiver_oprf.authenticated_permutation,
