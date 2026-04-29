@@ -47,6 +47,8 @@ struct PartyRun {
     bytes_received: u64,
     new_ms: u128,
     run_and_open_ms: u128,
+    new_bytes_sent: u64,
+    new_bytes_received: u64,
     elapsed_ms: u128,
 }
 
@@ -125,9 +127,15 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     let bytes_sent_before = channel.bytes_sent();
     let bytes_received_before = channel.bytes_received();
     let new_start = Instant::now();
+    let new_bytes_sent_before = channel.bytes_sent();
+    let new_bytes_received_before = channel.bytes_received();
     let mut two_side_psu = TwoSidePsuSender::new(delta, k0, &mut channel)
         .map_err(|e| eyre::eyre!("sender failed to initialize two_side_psu: {e}"))?;
     let new_ms = new_start.elapsed().as_millis();
+    let new_bytes_sent = channel.bytes_sent().saturating_sub(new_bytes_sent_before);
+    let new_bytes_received = channel
+        .bytes_received()
+        .saturating_sub(new_bytes_received_before);
     let mut protocol_rng = sample_local_protocol_rng(&mut seed_rng);
     let run_and_open_start = Instant::now();
     let receiver_difference = two_side_psu
@@ -170,6 +178,8 @@ fn sender_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
             .saturating_sub(bytes_received_before),
         new_ms,
         run_and_open_ms,
+        new_bytes_sent,
+        new_bytes_received,
         elapsed_ms: start.elapsed().as_millis(),
     })
 }
@@ -212,9 +222,15 @@ fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
     let bytes_sent_before = channel.bytes_sent();
     let bytes_received_before = channel.bytes_received();
     let new_start = Instant::now();
+    let new_bytes_sent_before = channel.bytes_sent();
+    let new_bytes_received_before = channel.bytes_received();
     let mut two_side_psu = TwoSidePsuReceiver::new(delta, k1, &mut channel)
         .map_err(|e| eyre::eyre!("receiver failed to initialize two_side_psu: {e}"))?;
     let new_ms = new_start.elapsed().as_millis();
+    let new_bytes_sent = channel.bytes_sent().saturating_sub(new_bytes_sent_before);
+    let new_bytes_received = channel
+        .bytes_received()
+        .saturating_sub(new_bytes_received_before);
     let mut protocol_rng = sample_local_protocol_rng(&mut local_rng);
     let run_and_open_start = Instant::now();
     let sender_difference = two_side_psu
@@ -257,6 +273,8 @@ fn receiver_party(addr: &str, args: Args) -> eyre::Result<PartyRun> {
             .saturating_sub(bytes_received_before),
         new_ms,
         run_and_open_ms,
+        new_bytes_sent,
+        new_bytes_received,
         elapsed_ms: start.elapsed().as_millis(),
     })
 }
@@ -288,8 +306,15 @@ fn main() -> eyre::Result<()> {
         run.union_size
     );
     println!(
-        "timing_ms={} new_ms={} run_and_open_ms={} bytes_sent={} bytes_received={}",
-        run.elapsed_ms, run.new_ms, run.run_and_open_ms, run.bytes_sent, run.bytes_received
+        "timing_ms={} new_ms={} run_and_open_ms={} bytes_sent={} bytes_received={} new_bytes_sent={} new_bytes_received={} new_bytes_total={}",
+        run.elapsed_ms,
+        run.new_ms,
+        run.run_and_open_ms,
+        run.bytes_sent,
+        run.bytes_received,
+        run.new_bytes_sent,
+        run.new_bytes_received,
+        run.new_bytes_sent + run.new_bytes_received
     );
 
     Ok(())

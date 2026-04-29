@@ -134,6 +134,20 @@ impl TwoSidePsuSender {
             "two_side_psu sender requires at least 2 receiver-only triples"
         );
         let psi_cardinality_start = Instant::now();
+        let run_bytes_sent_before = channel.bytes_sent();
+        let run_bytes_received_before = channel.bytes_received();
+        let log_sender_comm_checkpoint = |label: &str, channel: &SwankyChannel| {
+            let bytes_sent = channel.bytes_sent().saturating_sub(run_bytes_sent_before);
+            let bytes_received = channel
+                .bytes_received()
+                .saturating_sub(run_bytes_received_before);
+            println!(
+                "two_side_psu_sender_comm_{label} bytes_sent={} bytes_received={} bytes_total={}",
+                bytes_sent,
+                bytes_received,
+                bytes_sent + bytes_received
+            );
+        };
 
         let receiver_set_len = exchange_set_size(sender_set.len(), channel)?;
         ensure!(
@@ -176,6 +190,7 @@ impl TwoSidePsuSender {
             "two_side_psu_sender_ms_before_verify_bitmap_shuffle={}",
             psi_cardinality_start.elapsed().as_millis()
         );
+        log_sender_comm_checkpoint("before_verify_bitmap_shuffle", channel);
 
         // Verify sender-set bitmap proof from peer.
         let sender_mq_rpmt_start = Instant::now();
@@ -195,6 +210,7 @@ impl TwoSidePsuSender {
             "two_side_psu_sender_mq_rpmt_ms={}",
             sender_mq_rpmt_start.elapsed().as_millis()
         );
+        log_sender_comm_checkpoint("after_mq_rpmt_verify_bitmap_shuffle", channel);
 
         ensure!(
             sender_oprf.authenticated_inputs.len() == authenticated_sender_original_bitmap.len(),
@@ -227,6 +243,7 @@ impl TwoSidePsuSender {
             "two_side_psu_sender_first_batch_multiply_ms={}",
             sender_first_batch_multiply_start.elapsed().as_millis()
         );
+        log_sender_comm_checkpoint("after_first_batch_multiply", channel);
 
         // Prove receiver-set bitmap proof to peer using the same shuffled OPRF transcript.
         let authenticated_receiver_original_bitmap = self
@@ -352,6 +369,20 @@ impl TwoSidePsuReceiver {
             receiver_only_triples.len()
         );
         let psi_cardinality_start = Instant::now();
+        let run_bytes_sent_before = channel.bytes_sent();
+        let run_bytes_received_before = channel.bytes_received();
+        let log_receiver_comm_checkpoint = |label: &str, channel: &SwankyChannel| {
+            let bytes_sent = channel.bytes_sent().saturating_sub(run_bytes_sent_before);
+            let bytes_received = channel
+                .bytes_received()
+                .saturating_sub(run_bytes_received_before);
+            println!(
+                "two_side_psu_receiver_comm_{label} bytes_sent={} bytes_received={} bytes_total={}",
+                bytes_sent,
+                bytes_received,
+                bytes_sent + bytes_received
+            );
+        };
 
         let sender_set_len = exchange_set_size(receiver_set.len(), channel)?;
         ensure!(
@@ -394,6 +425,7 @@ impl TwoSidePsuReceiver {
             "two_side_psu_receiver_ms_before_verify_bitmap_shuffle={}",
             psi_cardinality_start.elapsed().as_millis()
         );
+        log_receiver_comm_checkpoint("before_verify_bitmap_shuffle", channel);
 
         // Prove sender-set bitmap proof to peer.
         let authenticated_sender_original_bitmap = self
@@ -438,6 +470,7 @@ impl TwoSidePsuReceiver {
             "two_side_psu_receiver_first_batch_multiply_ms={}",
             receiver_first_batch_multiply_start.elapsed().as_millis()
         );
+        log_receiver_comm_checkpoint("after_first_batch_multiply", channel);
 
         // Verify receiver-set bitmap proof from peer.
         let receiver_mq_rpmt_start = Instant::now();
@@ -459,6 +492,7 @@ impl TwoSidePsuReceiver {
             "two_side_psu_receiver_mq_rpmt_ms={}",
             receiver_mq_rpmt_start.elapsed().as_millis()
         );
+        log_receiver_comm_checkpoint("after_mq_rpmt_verify_bitmap_shuffle", channel);
 
         ensure!(
             receiver_oprf.authenticated_inputs.len()
